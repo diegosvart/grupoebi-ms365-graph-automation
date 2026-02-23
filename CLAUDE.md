@@ -47,6 +47,11 @@ Ver `.env.example` — residen en el .env del MCP, no en este directorio
 - **fornado-planner-mcp** — activar ANTES de iniciar sesión si la sesión involucra Graph API
 - **GitHub** — servidor remoto (Streamable HTTP). Copiar `.cursor/mcp.json.example` → `.cursor/mcp.json`, reemplazar `YOUR_GITHUB_PAT` por un [Personal Access Token](https://github.com/settings/tokens). Requiere Cursor v0.48.0+. Reiniciar Cursor tras configurar. Guía: [Install GitHub MCP Server in Cursor](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-cursor.md)
 
+## Agent Skills
+- **Ubicación:** `.cursor/skills/` (skills de proyecto).
+- **Índice:** [.cursor/skills/README.md](.cursor/skills/README.md) — skills recomendadas por fase (actual, backend, frontend) con origen y revisión de seguridad. Fuente: [awesome-agent-skills](https://github.com/VoltAgent/awesome-agent-skills).
+- **Skill de proyecto:** `planner-graph-csv` — reglas Graph/Planner, flujos (plan → buckets → tasks) y diseño futuro; ver `.cursor/skills/planner-graph-csv/SKILL.md`.
+
 ## Agentes
 - **Control de versiones (Git)** — definido en `AGENTS.md` en la raíz. Especialista en ramas, commits, PR/MR con niveles L0–L3 y límites estrictos (no force push, no secretos en salida). Comandos slash: `.cursor/commands/prepare-commit.md` (L2: diff → commit sin push), `.cursor/commands/open-pr.md` (L3: push → crear PR). Regla: `.cursor/rules/version-control.mdc`.
 
