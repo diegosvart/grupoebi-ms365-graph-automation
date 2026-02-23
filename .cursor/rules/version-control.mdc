@@ -1,0 +1,13 @@
+---
+description: Para tareas de Git, ramas, commits y PR/MR, seguir AGENTS.md (agente especialista en control de versiones). Niveles L0–L3; no force push ni secretos en salida.
+globs: []
+---
+
+Cuando el usuario pida tareas relacionadas con control de versiones (git, branch, commit, push, revert, PR, MR, merge, rebase), aplicar el comportamiento definido en **AGENTS.md** en la raíz del repo:
+
+- Operar por defecto en L1 (terminal seguro); elevar a L2/L3 solo si el usuario lo autoriza.
+- No ejecutar `git push --force` ni reescritura de historia publicada sin aprobación explícita.
+- No incluir ni imprimir tokens/secretos en consola, issues o PRs.
+- Usar el formato de salida estándar: Hallazgos → Plan → Acciones → Verificación → Riesgos/rollback → Siguiente paso.
+
+Referencia completa de comandos permitidos, límites y playbooks: AGENTS.md en la raíz del repo.

@@ -44,20 +44,16 @@ Ver `.env.example` — residen en el .env del MCP, no en este directorio
 4. `--dry-run` debe funcionar sin credenciales
 
 ## MCP activo
-`fornado-planner-mcp` — activar ANTES de iniciar sesión si la sesión involucra Graph API
+- **fornado-planner-mcp** — activar ANTES de iniciar sesión si la sesión involucra Graph API
+- **GitHub** — servidor remoto (Streamable HTTP). Copiar `.cursor/mcp.json.example` → `.cursor/mcp.json`, reemplazar `YOUR_GITHUB_PAT` por un [Personal Access Token](https://github.com/settings/tokens). Requiere Cursor v0.48.0+. Reiniciar Cursor tras configurar. Guía: [Install GitHub MCP Server in Cursor](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-cursor.md)
+
+## Agentes
+- **Control de versiones (Git)** — definido en `AGENTS.md` en la raíz. Especialista en ramas, commits, PR/MR con niveles L0–L3 y límites estrictos (no force push, no secretos en salida). Comandos slash: `.cursor/commands/prepare-commit.md` (L2: diff → commit sin push), `.cursor/commands/open-pr.md` (L3: push → crear PR). Regla: `.cursor/rules/version-control.mdc`.
 
 ## Estado en GitHub
-- **Repositorio Git:** inicializado (`git init`); existe `.git` y `.gitignore` en la raíz.
-- **Remoto GitHub:** no definido; hay que crear el repo en GitHub y asociar el remote.
-- **Primer push (ejecutar en la raíz del proyecto):**
-  ```bash
-  git add .
-  git commit -m "Initial commit: Planner Import script"
-  git remote add origin https://github.com/<org-o-usuario>/<repo>.git
-  git branch -M main
-  git push -u origin main
-  ```
-  Sustituir `<org-o-usuario>` y `<repo>` por la URL real del repositorio en GitHub.
+- **Repositorio:** [grupoebi-ms365-graph-automation](https://github.com/diegosvart/grupoebi-ms365-graph-automation)
+- **Remoto:** `origin` → `https://github.com/diegosvart/grupoebi-ms365-graph-automation.git`
+- **Rama por defecto:** `main` (tracking `origin/main`).
 
 ## Errores aprendidos
 <!-- Agregar después de cada corrección: qué salió mal y la regla nueva -->

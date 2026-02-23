@@ -27,3 +27,6 @@ htmlcov/
 
 # Claude / Cursor (opcional; quitar si quieres versionar reglas)
 .claude/sessions/
+
+# MCP con secretos (usar .cursor/mcp.json.example como plantilla)
+.cursor/mcp.json
