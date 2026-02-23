@@ -1,0 +1,3 @@
+PlanID;BucketID;TaskTitle;TaskDescription;AssignedToEmail;StartDate;DueDate;Priority;PercentComplete;ChecklistItems;Labels
+aaa11111-0000-0000-0000-000000000001;bbb22222-0000-0000-0000-000000000002;Tarea Tasks Uno;Desc uno;alice@test.com;01022026;28022026;medium;0;Item 1;TI
+aaa11111-0000-0000-0000-000000000001;bbb22222-0000-0000-0000-000000000002;Tarea Tasks Dos;;bob@test.com;05022026;15022026;important;25;;

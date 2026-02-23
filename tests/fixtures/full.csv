@@ -1,0 +1,4 @@
+PlanName;BucketName;TaskTitle;TaskDescription;AssignedToEmail;StartDate;DueDate;Priority;PercentComplete;ChecklistItems;Labels
+Plan Test;Bucket Alpha;Tarea Uno;Descripcion uno;alice@test.com;01022026;28022026;medium;0;"Sub A;Sub B";TI
+Plan Test;Bucket Alpha;Tarea Dos;;bob@test.com;05022026;15022026;urgent;50;;PM
+Plan Test;Bucket Beta;Tarea Tres;Otra desc;alice@test.com;10022026;20022026;low;100;"Item X;Item Y";"TI;PM"

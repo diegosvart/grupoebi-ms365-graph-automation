@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Move-Item -Path ''C:\\\\Users\\\\usuario\\\\OneDrive - Cosemar\\\\PM\\\\Definicion plan control y gestión de proyectos\\\\Planner_Import'' -Destination ''C:\\\\Users\\\\usuario\\\\OneDrive - Cosemar\\\\PM\\\\Definicion plan control y gestión de proyectos\\\\Automatizaciones\\\\Planner_Import''\")",
+      "Bash(powershell -Command \"Move-Item -Path ''C:\\\\Users\\\\usuario\\\\OneDrive - Cosemar\\\\PM\\\\Definicion plan control y gestión de proyectos\\\\Planner_Import'' -Destination ''C:\\\\Users\\\\usuario\\\\OneDrive - Cosemar\\\\PM\\\\Definicion plan control y gestión de proyectos\\\\Automatizaciones\\\\Planner_Import'' -Force\")",
+      "Bash(python -c:*)",
+      "Bash(pip install:*)",
+      "Bash(python3 -m pip install:*)",
+      "Bash(python3:*)",
+      "Bash(node --version:*)",
+      "Bash(python planner_import.py:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(start \"\" \"C:\\\\Users\\\\usuario\\\\OneDrive - Cosemar\\\\PM\\\\Automatización_procesos_MsGraph\\\\Planner_Import_script\\\\MANUAL.md\")"
+    ]
+  }
+}
