@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import csv
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -426,7 +427,13 @@ async def run_create_environment(
                 print(f"    channel_id : {channel_id}")
                 print(f"    channel_url: {channel_url}")
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in (400, 409):
+                if exc.response.status_code == 404:
+                    raise RuntimeError(
+                        f"El grupo '{group_id}' no tiene Teams habilitado. "
+                        "Ejecuta PUT /groups/{group_id}/team para habilitarlo "
+                        "y vuelve a ejecutar el script."
+                    ) from exc
+                elif exc.response.status_code in (400, 409):
                     print(f"    [skip] Canal ya existe ({exc.response.status_code}) — recuperando ID...")
                     channel_id, channel_url = await get_channel_by_name(
                         client, token, group_id, proj["project_name"]
@@ -438,7 +445,8 @@ async def run_create_environment(
                         print(f"    [WARN] No se pudo recuperar channel_id del canal existente")
                 else:
                     raise
-            await asyncio.sleep(1)
+            print("    [wait] Esperando 60s para propagación del canal en Teams...")
+            await asyncio.sleep(60)
 
             project_entry["channel_id"] = channel_id
             project_entry["channel_url"] = channel_url
@@ -612,6 +620,7 @@ async def run_create_environment(
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         description="Etapa 1 — Crear entorno de proyecto: canal Teams + Planner + carpetas SharePoint"
     )

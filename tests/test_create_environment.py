@@ -53,6 +53,12 @@ def _make_409() -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("conflict", request=MagicMock(), response=resp)
 
 
+def _make_404() -> httpx.HTTPStatusError:
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 404
+    return httpx.HTTPStatusError("not found", request=MagicMock(), response=resp)
+
+
 def _mock_httpx_constructor() -> MagicMock:
     """Devuelve un reemplazo para httpx.AsyncClient (constructor mock)."""
     mock_client = MagicMock(spec=httpx.AsyncClient)
@@ -399,6 +405,27 @@ class TestRunCreateEnvironment409:
             await run_create_environment(fixture_csv1_sample, "group-id")
 
         mock_plan.assert_called_once()
+
+    async def test_canal_404_raises_runtime_error(
+        self, fixture_csv1_sample, mock_auth_env
+    ):
+        """404 en canal → RuntimeError con mensaje sobre Teams habilitado; Planner no se llama."""
+        patches = self._base_patches()
+        patches["create_environment.create_team_channel"] = AsyncMock(
+            side_effect=_make_404()
+        )
+
+        with patch("httpx.AsyncClient", patches["httpx.AsyncClient"]), \
+             patch("create_environment.get_site_id", patches["create_environment.get_site_id"]), \
+             patch("create_environment.graph_request", patches["create_environment.graph_request"]), \
+             patch("create_environment.ensure_help_dir", patches["create_environment.ensure_help_dir"]), \
+             patch("create_environment.resolve_email_to_guid", patches["create_environment.resolve_email_to_guid"]), \
+             patch("create_environment.create_team_channel", patches["create_environment.create_team_channel"]), \
+             patch("create_environment.create_plan", patches["create_environment.create_plan"]) as mock_plan, \
+             patch("asyncio.sleep", patches["asyncio.sleep"]):
+            with pytest.raises(RuntimeError, match="Teams habilitado"):
+                await run_create_environment(fixture_csv1_sample, "group-id")
+        mock_plan.assert_not_called()
 
     async def test_folder_409_skips_and_does_not_raise(
         self, fixture_csv1_sample, mock_auth_env
