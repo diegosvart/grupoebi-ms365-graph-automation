@@ -10,6 +10,7 @@ import pytest
 import create_environment
 from create_environment import (
     add_channel_member,
+    add_team_member,
     add_planner_tab,
     create_sp_folder,
     create_team_channel,
@@ -349,6 +350,7 @@ class TestRunCreateEnvironment409:
                 return_value={"id": "ch-id", "webUrl": ""}
             ),
             "create_environment.add_channel_member": AsyncMock(return_value=None),
+            "create_environment.add_team_member": AsyncMock(return_value=None),
             "create_environment.parse_csv": MagicMock(return_value=([], [])),
             "create_environment.extract_ordered_unique": MagicMock(return_value=[]),
             "create_environment.create_plan": AsyncMock(return_value={"id": "plan-id"}),
@@ -362,6 +364,11 @@ class TestRunCreateEnvironment409:
             "create_environment.save_project_config": MagicMock(return_value=None),
             "asyncio.sleep": AsyncMock(return_value=None),
         }
+
+    def _apply_patches(self, patches, **overrides):
+        """Aplica el dict de patches como context managers anidados (helper interno)."""
+        p = {**patches, **overrides}
+        return [patch(k, v) for k, v in p.items()]
 
     async def test_canal_409_skips_and_planner_continues(
         self, fixture_csv1_sample, mock_auth_env
@@ -378,6 +385,7 @@ class TestRunCreateEnvironment409:
              patch("create_environment.resolve_email_to_guid", patches["create_environment.resolve_email_to_guid"]), \
              patch("create_environment.create_team_channel", patches["create_environment.create_team_channel"]), \
              patch("create_environment.add_channel_member", patches["create_environment.add_channel_member"]), \
+             patch("create_environment.add_team_member", patches["create_environment.add_team_member"]), \
              patch("create_environment.parse_csv", patches["create_environment.parse_csv"]), \
              patch("create_environment.extract_ordered_unique", patches["create_environment.extract_ordered_unique"]), \
              patch("create_environment.create_plan", patches["create_environment.create_plan"]) as mock_plan, \
@@ -407,6 +415,7 @@ class TestRunCreateEnvironment409:
              patch("create_environment.resolve_email_to_guid", patches["create_environment.resolve_email_to_guid"]), \
              patch("create_environment.create_team_channel", patches["create_environment.create_team_channel"]), \
              patch("create_environment.add_channel_member", patches["create_environment.add_channel_member"]), \
+             patch("create_environment.add_team_member", patches["create_environment.add_team_member"]), \
              patch("create_environment.parse_csv", patches["create_environment.parse_csv"]), \
              patch("create_environment.extract_ordered_unique", patches["create_environment.extract_ordered_unique"]), \
              patch("create_environment.create_plan", patches["create_environment.create_plan"]), \
@@ -417,16 +426,14 @@ class TestRunCreateEnvironment409:
              patch("create_environment.load_project_config", patches["create_environment.load_project_config"]), \
              patch("create_environment.save_project_config", patches["create_environment.save_project_config"]), \
              patch("asyncio.sleep", patches["asyncio.sleep"]):
-            # No debe lanzar excepción
             await run_create_environment(fixture_csv1_sample, "group-id")
 
     async def test_subfolder_409_skips_and_continues_loop(
         self, fixture_csv1_sample, mock_auth_env
     ):
-        # Carpeta principal OK, 01_INICIO falla, resto OK
         subfolder_side_effects = [
-            {"id": "folder-id", "webUrl": ""},   # carpeta principal
-            _make_409(),                           # 01_INICIO → 409
+            {"id": "folder-id", "webUrl": ""},
+            _make_409(),                            # 01_INICIO → 409
             {"id": "sub-02", "webUrl": ""},
             {"id": "sub-03", "webUrl": ""},
             {"id": "sub-04", "webUrl": ""},
@@ -444,6 +451,7 @@ class TestRunCreateEnvironment409:
              patch("create_environment.resolve_email_to_guid", patches["create_environment.resolve_email_to_guid"]), \
              patch("create_environment.create_team_channel", patches["create_environment.create_team_channel"]), \
              patch("create_environment.add_channel_member", patches["create_environment.add_channel_member"]), \
+             patch("create_environment.add_team_member", patches["create_environment.add_team_member"]), \
              patch("create_environment.parse_csv", patches["create_environment.parse_csv"]), \
              patch("create_environment.extract_ordered_unique", patches["create_environment.extract_ordered_unique"]), \
              patch("create_environment.create_plan", patches["create_environment.create_plan"]), \
@@ -459,8 +467,9 @@ class TestRunCreateEnvironment409:
     async def test_member_409_skips_and_planner_continues(
         self, fixture_csv1_sample, mock_auth_env
     ):
+        # add_team_member es la función que usa run_create_environment (canales estándar)
         patches = self._base_patches()
-        patches["create_environment.add_channel_member"] = AsyncMock(
+        patches["create_environment.add_team_member"] = AsyncMock(
             side_effect=_make_409()
         )
 
@@ -471,6 +480,7 @@ class TestRunCreateEnvironment409:
              patch("create_environment.resolve_email_to_guid", patches["create_environment.resolve_email_to_guid"]), \
              patch("create_environment.create_team_channel", patches["create_environment.create_team_channel"]), \
              patch("create_environment.add_channel_member", patches["create_environment.add_channel_member"]), \
+             patch("create_environment.add_team_member", patches["create_environment.add_team_member"]), \
              patch("create_environment.parse_csv", patches["create_environment.parse_csv"]), \
              patch("create_environment.extract_ordered_unique", patches["create_environment.extract_ordered_unique"]), \
              patch("create_environment.create_plan", patches["create_environment.create_plan"]) as mock_plan, \

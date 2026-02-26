@@ -131,6 +131,26 @@ async def create_team_channel(
     )
 
 
+async def get_channel_by_name(
+    client: httpx.AsyncClient,
+    token: str,
+    group_id: str,
+    name: str,
+) -> tuple[str, str]:
+    """GET /teams/{groupId}/channels — busca canal por displayName.
+
+    Devuelve (channel_id, webUrl) o ("", "") si no se encuentra.
+    Usado para recuperar el ID de un canal ya existente tras 400/409.
+    Permiso requerido: ChannelSettings.ReadWrite.All (aplicación)
+    """
+    data = await graph_request(client, "GET", f"/teams/{group_id}/channels", token)
+    display_name = name[:50]
+    for ch in data.get("value", []):
+        if ch.get("displayName") == display_name:
+            return ch["id"], ch.get("webUrl", "")
+    return "", ""
+
+
 async def add_channel_member(
     client: httpx.AsyncClient,
     token: str,
@@ -141,6 +161,7 @@ async def add_channel_member(
 ) -> None:
     """POST /teams/{groupId}/channels/{channelId}/members — agrega usuario con rol dado.
 
+    Solo válido para canales privados o compartidos. Para canales estándar usar add_team_member.
     Permiso requerido: ChannelMember.ReadWrite.All (aplicación)
     role: "owner" o "" (miembro normal)
     """
@@ -148,6 +169,31 @@ async def add_channel_member(
     await graph_request(
         client, "POST",
         f"/teams/{group_id}/channels/{channel_id}/members", token,
+        json={
+            "@odata.type": "#microsoft.graph.aadUserConversationMember",
+            "roles": roles,
+            "user@odata.bind": f"https://graph.microsoft.com/v1.0/users/{user_id}",
+        },
+    )
+
+
+async def add_team_member(
+    client: httpx.AsyncClient,
+    token: str,
+    group_id: str,
+    user_id: str,
+    role: str = "owner",
+) -> None:
+    """POST /teams/{groupId}/members — agrega usuario al equipo con rol dado.
+
+    Correcto para canales estándar (la membresía se hereda del equipo).
+    Permiso requerido: TeamMember.ReadWrite.All (aplicación)
+    role: "owner" o "" (miembro normal)
+    """
+    roles = [role] if role else []
+    await graph_request(
+        client, "POST",
+        f"/teams/{group_id}/members", token,
         json={
             "@odata.type": "#microsoft.graph.aadUserConversationMember",
             "roles": roles,
@@ -380,8 +426,16 @@ async def run_create_environment(
                 print(f"    channel_id : {channel_id}")
                 print(f"    channel_url: {channel_url}")
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 409:
-                    print(f"    [skip] Canal '{proj['project_name'][:50]}' ya existe (409)")
+                if exc.response.status_code in (400, 409):
+                    print(f"    [skip] Canal ya existe ({exc.response.status_code}) — recuperando ID...")
+                    channel_id, channel_url = await get_channel_by_name(
+                        client, token, group_id, proj["project_name"]
+                    )
+                    if channel_id:
+                        print(f"    channel_id (existing): {channel_id}")
+                        print(f"    channel_url          : {channel_url}")
+                    else:
+                        print(f"    [WARN] No se pudo recuperar channel_id del canal existente")
                 else:
                     raise
             await asyncio.sleep(1)
@@ -400,7 +454,7 @@ async def run_create_environment(
                         print(f"    [skip] {role_label} sin GUID — no se puede agregar")
                         continue
                     try:
-                        await add_channel_member(client, token, group_id, channel_id, user_guid, "owner")
+                        await add_team_member(client, token, group_id, user_guid, "owner")
                         print(f"    ✓ {role_label} {user_email}")
                     except httpx.HTTPStatusError as exc:
                         if exc.response.status_code == 409:
