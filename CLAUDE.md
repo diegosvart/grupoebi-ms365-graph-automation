@@ -43,6 +43,43 @@ Ver `.env.example` — residen en el .env del MCP, no en este directorio
 3. Siempre obtener ETag antes de PATCH (plans/details, tasks/details)
 4. `--dry-run` debe funcionar sin credenciales
 
+## GitHub Project — Gestión de tareas
+
+- **Project:** [Automatización MS365 — Roadmap](https://github.com/users/diegosvart/projects/1)
+- **Repo:** `diegosvart/grupoebi-ms365-graph-automation`
+- **Labels:** `task`, `feature`, `bug`, `docs`, `etapa-2`, `blocked`
+
+### Regla de inicio de sesión (OBLIGATORIO)
+
+Al iniciar cada sesión, el agente debe:
+1. Listar issues abiertos del proyecto con `gh project item-list 1 --owner diegosvart --format json`
+2. Mostrar al usuario un resumen de tareas pendientes (Todo + In Progress)
+3. Preguntar si se trabaja sobre alguna tarea existente o se añade una nueva
+
+### Comandos de gestión rápida
+
+```bash
+# Ver tareas pendientes
+gh project item-list 1 --owner diegosvart --format json
+
+# Crear nueva tarea
+gh issue create --repo diegosvart/grupoebi-ms365-graph-automation --title "..." --label "task"
+
+# Agregar issue al proyecto
+gh project item-add 1 --owner diegosvart --url <issue-url>
+
+# Mover a In Progress (option-id: 47fc9ee4)
+gh project item-edit --project-id PVT_kwHOAKqO384BQWWO --id <item-id> --field-id PVTSSF_lAHOAKqO384BQWWOzg-fs6Q --single-select-option-id 47fc9ee4
+
+# Mover a Done (option-id: 98236657)
+gh project item-edit --project-id PVT_kwHOAKqO384BQWWO --id <item-id> --field-id PVTSSF_lAHOAKqO384BQWWOzg-fs6Q --single-select-option-id 98236657
+```
+
+### IDs fijos del proyecto
+- **Project ID:** `PVT_kwHOAKqO384BQWWO`
+- **Status field ID:** `PVTSSF_lAHOAKqO384BQWWOzg-fs6Q`
+- **Todo:** `f75ad846` | **In Progress:** `47fc9ee4` | **Done:** `98236657`
+
 ## MCP activo
 - **fornado-planner-mcp** — activar ANTES de iniciar sesión si la sesión involucra Graph API
 - **GitHub** — servidor remoto (Streamable HTTP). Copiar `.cursor/mcp.json.example` → `.cursor/mcp.json`, reemplazar `YOUR_GITHUB_PAT` por un [Personal Access Token](https://github.com/settings/tokens). Requiere Cursor v0.48.0+. Reiniciar Cursor tras configurar. Guía: [Install GitHub MCP Server in Cursor](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-cursor.md)
