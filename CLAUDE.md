@@ -55,5 +55,18 @@ Ver `.env.example` — residen en el .env del MCP, no en este directorio
 - **Remoto:** `origin` → `https://github.com/diegosvart/grupoebi-ms365-graph-automation.git`
 - **Rama por defecto:** `main` (tracking `origin/main`).
 
+## Flujo de ramas (Git)
+```
+feature/* → develop → main
+```
+- **`feature/*`** — trabajo diario. Rama base siempre `develop`, nunca `main`.
+- **`develop`** — integración. PRs de features van aquí. Rama protegida.
+- **`main`** — solo releases estables desde `develop`. Nunca recibe PRs de features directamente.
+
+**Reglas para el agente:**
+1. Al abrir un PR, comprobar siempre la estructura de ramas antes de proponer rama base.
+2. La rama base por defecto es `develop`, no `main`.
+3. El agente NO mergea PRs hacia `main` sin confirmación explícita del usuario.
+
 ## Errores aprendidos
-<!-- Agregar después de cada corrección: qué salió mal y la regla nueva -->
+- **2026-02-26** — PR de feature mergeado directamente a `main` saltándose `develop`. Causa: el agente propuso `main` como rama base sin revisar la estructura del repo. Regla añadida: verificar ramas existentes antes de proponer rama base de PR.
