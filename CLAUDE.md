@@ -73,5 +73,28 @@ feature/* → develop → main
 2. La rama base por defecto es `develop`, no `main`.
 3. El agente NO mergea PRs hacia `main` sin confirmación explícita del usuario.
 
+## Convención CSV1 — create_environment.py
+
+| Columna | Descripción | Ejemplo |
+|---|---|---|
+| `ProjectID` | ID único del proyecto | `PRJ-2026-001` |
+| `ProjectName` | Nombre completo (puede incluir el ID como prefijo) | `PRJ-2026-001-Cash-Flow` o `Cash-Flow` |
+| `PMEmail` | Email del Project Manager | `dmorales@grupoebi.cl` |
+| `LiderEmail` | Email del Líder técnico | `gcontreras@grupoebi.cl` |
+| `StartDate` | Fecha de inicio (`DD-MM-YYYY`) | `01-03-2026` |
+| `PlannerCSV` | Ruta al CSV de tareas Planner | `templates/default_init/Planner_Template_DEFAULT_V3.csv` |
+
+**Normalización de nombres (`_strip_id_prefix`):**
+`parse_csv1()` deriva un campo `display_name` eliminando el prefijo `ProjectID` de `ProjectName` si ya está incluido (tolerante a separadores `-`, `_`, ` `).
+
+| `ProjectName` en CSV | `display_name` derivado | Carpeta SharePoint |
+|---|---|---|
+| `PRJ-2026-001-Cash-Flow` | `Cash-Flow` | `PRJ-2026-001_Cash-Flow` ✓ |
+| `Cash-Flow` | `Cash-Flow` | `PRJ-2026-001_Cash-Flow` ✓ |
+| `PRJ-2026-001_Cash-Flow` | `Cash-Flow` | `PRJ-2026-001_Cash-Flow` ✓ |
+
+- **Canal Teams** → usa `project_name` (nombre completo del CSV)
+- **Carpeta SharePoint** → usa `f"{project_id}_{display_name}"` (ID autorizado + nombre limpio)
+
 ## Errores aprendidos
 - **2026-02-26** — PR de feature mergeado directamente a `main` saltándose `develop`. Causa: el agente propuso `main` como rama base sin revisar la estructura del repo. Regla añadida: verificar ramas existentes antes de proponer rama base de PR.
