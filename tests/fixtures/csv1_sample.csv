@@ -1,0 +1,2 @@
+ProjectID;ProjectName;PMEmail;LiderEmail;StartDate;PlannerCSV
+PRJ-TEST-001;Proyecto Test;pm@test.com;lider@test.com;01-03-2026;tests/fixtures/full.csv

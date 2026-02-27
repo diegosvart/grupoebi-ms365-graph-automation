@@ -14,23 +14,34 @@ Uso:
   python planner_import.py --mode plan --csv <ruta> --group-id <guid>
   python planner_import.py --mode list [--filter <texto>]
   python planner_import.py --mode delete [--filter <texto>] [--dry-run]
+  python planner_import.py --mode sp-list [--site-url <url>] [--folder <ruta>] [--filter <texto>]
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import csv
+import os
 import sys
 import uuid
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
 
 # ── Auth reutilizada del MCP ──────────────────────────────────────────────────
-MCP_PATH = Path(r"C:\Users\usuario\mcp-servers\fornado-planner-mcp")
+# Ruta por defecto: %USERPROFILE%\mcp-servers\fornado-planner-mcp (override con env MCP_PATH)
+MCP_PATH = Path(os.environ.get("MCP_PATH", Path.home() / "mcp-servers" / "fornado-planner-mcp"))
+if not MCP_PATH.is_dir():
+    sys.exit(
+        f"[ERROR] No se encontró el MCP fornado-planner-mcp en:\n  {MCP_PATH}\n"
+        "  Instálalo ahí o define la variable de entorno MCP_PATH con la ruta correcta.\n"
+        "  Ver MANUAL.md § 6 (Errores comunes)."
+    )
 sys.path.insert(0, str(MCP_PATH))
 load_dotenv(MCP_PATH / ".env")
 
@@ -41,8 +52,11 @@ from src.config import Settings  # noqa: E402
 GROUP_ID = "198b4a0a-39c7-4521-a546-6a008e3a254a"
 # ASSIGNEE_GUID anterior (ahora resuelto dinámicamente desde AssignedToEmail del CSV):
 # ASSIGNEE_GUID = "eed15e14-17d2-46fb-ac5f-d415b6e9db1f"
-CSV_PATH = Path(r"C:\Users\usuario\OneDrive - Cosemar\PM\Definicion plan control y gestión de proyectos\Docs\Borradores_proyectos_tareas\Planner_Imp_PROJ1.csv")
+CSV_PATH = Path(r"C:\Users\dmorales\OneDrive - Cosemar\PM\Definicion plan control y gestión de proyectos\Docs\Borradores_proyectos_tareas\Planner_Imp_PROJ1.csv")
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+SHAREPOINT_SITE_URL = "https://cosemar.sharepoint.com/sites/Gestioncontrolproyectos"
+
+CHECKLIST_TITLE_MAX = 100  # límite Planner — ítems más largos causan 400
 
 PRIORITY_MAP: dict[str, int] = {
     "urgent": 1,
@@ -58,29 +72,63 @@ LABEL_MAP: dict[str, str] = {}
 
 # ── Transformaciones ──────────────────────────────────────────────────────────
 
-def parse_date(ddmmyyyy: str) -> str:
-    """'17022026' → '2026-02-17T00:00:00Z'"""
-    d, m, y = ddmmyyyy[:2], ddmmyyyy[2:4], ddmmyyyy[4:]
-    return f"{y}-{m}-{d}T00:00:00Z"
+def _default_date() -> str:
+    """Fecha de fallback: hoy + 7 días en ISO 8601 UTC."""
+    return (date.today() + timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+
+
+def parse_date(ddmmyyyy: str) -> tuple[str | None, str | None]:
+    """Parsea DDMMYYYY a ISO 8601 UTC.
+
+    Returns:
+        (iso_string, None)      → fecha válida
+        (None, None)            → vacío / '00000000' (sin fecha)
+        (fallback_iso, warning) → formato incorrecto; fallback = hoy+7
+    """
+    raw = ddmmyyyy.strip()
+    # Normalizar DD-MM-YYYY → DDMMYYYY (el linter usa guiones)
+    if len(raw) == 10 and raw[2] == "-" and raw[5] == "-":
+        raw = raw[:2] + raw[3:5] + raw[6:]
+    if not raw or raw.strip("0") == "":
+        return None, None
+    if len(raw) != 8 or not raw.isdigit():
+        return _default_date(), f"'{ddmmyyyy.strip()}' no es DDMMYYYY — se usará hoy+7"
+    try:
+        datetime.strptime(raw, "%d%m%Y")
+    except ValueError:
+        return _default_date(), f"'{ddmmyyyy.strip()}' es una fecha inválida — se usará hoy+7"
+    d, m, y = raw[:2], raw[2:4], raw[4:]
+    return f"{y}-{m}-{d}T00:00:00Z", None
 
 
 def map_priority(label: str) -> int:
     return PRIORITY_MAP.get(label.lower(), 5)
 
 
-def build_checklist(items_str: str) -> dict[str, Any]:
-    """'item1;item2;item3' → {uuid: {title, isChecked, orderHint}, ...}"""
+def build_checklist(items_str: str) -> tuple[dict[str, Any], list[str]]:
+    """'item1;item2;item3' → ({uuid: {title, isChecked, orderHint}, ...}, warnings)
+
+    Ítems que superan CHECKLIST_TITLE_MAX se truncan; se incluye una advertencia
+    por cada uno para que el caller la notifique antes de llamar a Graph.
+    """
     result: dict[str, Any] = {}
+    warnings: list[str] = []
     for item in items_str.split(";"):
         item = item.strip()
-        if item:
-            result[str(uuid.uuid4())] = {
-                "@odata.type": "#microsoft.graph.plannerChecklistItem",
-                "title": item,
-                "isChecked": False,
-                "orderHint": " !",
-            }
-    return result
+        if not item:
+            continue
+        if len(item) > CHECKLIST_TITLE_MAX:
+            warnings.append(
+                f"  ⚠ Ítem de checklist truncado ({len(item)} chars): '{item[:40]}…'"
+            )
+            item = item[:CHECKLIST_TITLE_MAX]
+        result[str(uuid.uuid4())] = {
+            "@odata.type": "#microsoft.graph.plannerChecklistItem",
+            "title": item,
+            "isChecked": False,
+            "orderHint": " !",
+        }
+    return result, warnings
 
 
 def parse_labels(labels_str: str) -> dict[str, bool]:
@@ -93,26 +141,33 @@ def parse_labels(labels_str: str) -> dict[str, bool]:
     return applied
 
 
-def parse_csv(path: Path) -> list[dict[str, Any]]:
-    """Lee el CSV y devuelve lista de tareas normalizadas."""
+def parse_csv(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Lee el CSV y devuelve lista de tareas normalizadas y advertencias de fecha."""
     tasks: list[dict[str, Any]] = []
+    warnings: list[str] = []
     with path.open(encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
         for row in reader:
+            start_val, start_warn = parse_date(row["StartDate"].strip())
+            due_val,   due_warn   = parse_date(row["DueDate"].strip())
+            if start_warn:
+                warnings.append(f"  Fila {reader.line_num}: StartDate {start_warn}")
+            if due_warn:
+                warnings.append(f"  Fila {reader.line_num}: DueDate   {due_warn}")
             tasks.append({
                 "plan_name": row["PlanName"].strip(),
                 "bucket_name": row["BucketName"].strip(),
                 "title": row["TaskTitle"].strip(),
                 "description": row.get("TaskDescription", "").strip(),
-                "start_date": parse_date(row["StartDate"].strip()),
-                "due_date": parse_date(row["DueDate"].strip()),
+                "start_date": start_val,
+                "due_date": due_val,
                 "priority": map_priority(row["Priority"].strip()),
                 "percent_complete": int(row.get("PercentComplete", 0)),
                 "checklist_raw": row.get("ChecklistItems", "").strip(),
                 "labels_raw": row.get("Labels", "").strip(),
                 "assignee_email": row.get("AssignedToEmail", "").strip(),
             })
-    return tasks
+    return tasks, warnings
 
 
 def extract_ordered_unique(tasks: list[dict], key: str) -> list[str]:
@@ -124,9 +179,10 @@ def extract_ordered_unique(tasks: list[dict], key: str) -> list[str]:
     return seen
 
 
-def parse_csv_tasks(path: Path) -> list[dict[str, Any]]:
+def parse_csv_tasks(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
     """Modo tasks: requiere columnas PlanID y BucketID."""
     tasks: list[dict[str, Any]] = []
+    warnings: list[str] = []
     with path.open(encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
         for row in reader:
@@ -136,20 +192,26 @@ def parse_csv_tasks(path: Path) -> list[dict[str, Any]]:
                 raise ValueError(
                     f"Modo 'tasks' requiere PlanID y BucketID. Fila: {dict(row)}"
                 )
+            start_val, start_warn = parse_date(row["StartDate"].strip())
+            due_val,   due_warn   = parse_date(row["DueDate"].strip())
+            if start_warn:
+                warnings.append(f"  Fila {reader.line_num}: StartDate {start_warn}")
+            if due_warn:
+                warnings.append(f"  Fila {reader.line_num}: DueDate   {due_warn}")
             tasks.append({
                 "plan_id": plan_id,
                 "bucket_id": bucket_id,
                 "title": row["TaskTitle"].strip(),
                 "description": row.get("TaskDescription", "").strip(),
-                "start_date": parse_date(row["StartDate"].strip()),
-                "due_date": parse_date(row["DueDate"].strip()),
+                "start_date": start_val,
+                "due_date": due_val,
                 "priority": map_priority(row["Priority"].strip()),
                 "percent_complete": int(row.get("PercentComplete", 0) or 0),
                 "checklist_raw": row.get("ChecklistItems", "").strip(),
                 "labels_raw": row.get("Labels", "").strip(),
                 "assignee_email": row.get("AssignedToEmail", "").strip(),
             })
-    return tasks
+    return tasks, warnings
 
 
 def parse_csv_buckets(path: Path) -> list[dict[str, Any]]:
@@ -181,6 +243,27 @@ def parse_csv_plan(path: Path) -> dict[str, Any]:
             raise ValueError("Modo 'plan' requiere columna PlanName.")
         labels = [lbl.strip() for lbl in labels_raw.split(";") if lbl.strip()]
         return {"plan_name": plan_name, "labels": labels}
+
+
+def confirm_date_warnings(warnings: list[str], dry_run: bool) -> bool:
+    """Muestra las advertencias de fecha y pide confirmación si no es dry-run.
+
+    Returns:
+        True  → continuar
+        False → abortar (solo posible en ejecución real)
+    """
+    if not warnings:
+        return True
+    print()
+    print("⚠  Fechas inválidas en el CSV — se usará hoy+7 como fallback:")
+    for w in warnings:
+        print(w)
+    if dry_run:
+        print("   (dry-run: se continuaría con estos valores)")
+        return True
+    print()
+    resp = input("¿Proceder de todos modos? [s/N]: ").strip().lower()
+    return resp in ("s", "si", "sí", "y", "yes")
 
 
 # ── Graph API ─────────────────────────────────────────────────────────────────
@@ -296,6 +379,47 @@ async def delete_plan(
     )
 
 
+async def get_site_id(
+    client: httpx.AsyncClient,
+    token: str,
+    site_url: str,
+) -> str:
+    """GET /sites/{hostname}:/{site_path} → devuelve el site ID."""
+    parsed = urlparse(site_url)
+    hostname = parsed.netloc                    # cosemar.sharepoint.com
+    site_path = parsed.path.rstrip("/")        # /sites/Gestioncontrolproyectos
+    data = await graph_request(
+        client, "GET", f"/sites/{hostname}:{site_path}", token
+    )
+    return data["id"]
+
+
+async def list_site_drive_items(
+    client: httpx.AsyncClient,
+    token: str,
+    site_id: str,
+    folder_path: str = "",
+) -> list[dict[str, Any]]:
+    """
+    GET /sites/{siteId}/drive/root/children           (raíz)
+    GET /sites/{siteId}/drive/root:/{path}:/children  (subcarpeta)
+    Pagina con @odata.nextLink. Devuelve lista de DriveItems.
+    """
+    select = "name,size,file,folder,webUrl,lastModifiedDateTime,createdBy"
+    if folder_path:
+        endpoint = f"/sites/{site_id}/drive/root:/{folder_path}:/children?$select={select}&$top=100"
+    else:
+        endpoint = f"/sites/{site_id}/drive/root/children?$select={select}&$top=100"
+
+    items: list[dict[str, Any]] = []
+    while endpoint:
+        data = await graph_request(client, "GET", endpoint, token)
+        items.extend(data.get("value", []))
+        next_link: str = data.get("@odata.nextLink", "")
+        endpoint = next_link.replace(GRAPH_BASE, "") if next_link else ""
+    return items
+
+
 def _print_plans_table(plans: list[dict[str, Any]]) -> None:
     """Imprime tabla numerada con id, título y fecha de creación."""
     print(f"\n  {'#':<4} {'ID':<36} {'Título':<40} {'Creado'}")
@@ -304,6 +428,21 @@ def _print_plans_table(plans: list[dict[str, Any]]) -> None:
         created = p.get("createdDateTime", "")[:10]
         print(f"  {i:<4} {p['id']:<36} {p['title']:<40} {created}")
     print()
+
+
+def _print_docs_table(items: list[dict[str, Any]], filter_text: str = "") -> None:
+    """Imprime tabla de DriveItems (archivos/carpetas) de SharePoint."""
+    if filter_text:
+        items = [i for i in items if filter_text.lower() in i["name"].lower()]
+    print(f"\nDocumentos encontrados: {len(items)}\n")
+    print(f"  {'#':<4} {'Tipo':<7} {'Nombre':<50} {'Modificado':<12} {'Tamaño':>10}")
+    print(f"  {'-'*4} {'-'*7} {'-'*50} {'-'*12} {'-'*10}")
+    for i, item in enumerate(items, 1):
+        tipo = "Carpeta" if "folder" in item else "Archivo"
+        size = f"{item.get('size', 0):,}" if "file" in item else "-"
+        modified = item.get("lastModifiedDateTime", "")[:10]
+        name = item["name"][:49]
+        print(f"  {i:<4} {tipo:<7} {name:<50} {modified:<12} {size:>10}")
 
 
 async def resolve_email_to_guid(
@@ -347,9 +486,11 @@ async def create_task_full(
         "title": task["title"],
         "priority": task["priority"],
         "percentComplete": task["percent_complete"],
-        "startDateTime": task["start_date"],
-        "dueDateTime": task["due_date"],
     }
+    if task["start_date"] is not None:
+        payload["startDateTime"] = task["start_date"]
+    if task["due_date"] is not None:
+        payload["dueDateTime"] = task["due_date"]
     if assignee_guid is not None:
         payload["assignments"] = {
             assignee_guid: {
@@ -372,7 +513,9 @@ async def create_task_full(
     body: dict[str, Any] = {}
     if task["description"]:
         body["description"] = task["description"]
-    checklist = build_checklist(task["checklist_raw"])
+    checklist, checklist_warnings = build_checklist(task["checklist_raw"])
+    for w in checklist_warnings:
+        print(w)
     if checklist:
         body["checklist"] = checklist
 
@@ -488,6 +631,11 @@ class ImportResult:
     guids_resolved: int = 0
     guids_failed: list[str] = field(default_factory=list)
     tasks_unassigned: int = 0
+    # Campos dry-run (poblados desde CSV, sin llamada a la API)
+    dry_run: bool = False
+    plan_name: str = ""
+    buckets_total: int = 0
+    tasks_total: int = 0
 
 
 async def run_import_full(
@@ -499,7 +647,7 @@ async def run_import_full(
     FUTURO MCP: task_tools.py → TaskTools.import_plan_from_csv()
     """
     result = ImportResult()
-    tasks = parse_csv(csv_path)
+    tasks, date_warnings = parse_csv(csv_path)
     plan_name: str = tasks[0]["plan_name"]
     buckets_ordered = extract_ordered_unique(tasks, "bucket_name")
     all_labels = extract_ordered_unique(
@@ -517,9 +665,17 @@ async def run_import_full(
     print(f"Buckets  : {len(buckets_ordered)}")
     print(f"Tareas   : {len(tasks)}")
     print(f"Llamadas : ~{total_calls}")
-    print()
 
+    if not confirm_date_warnings(date_warnings, dry_run):
+        print("Importación cancelada por el usuario.")
+        return result
+
+    print()
     if dry_run:
+        result.dry_run = True
+        result.plan_name = plan_name
+        result.buckets_total = len(buckets_ordered)
+        result.tasks_total = len(tasks)
         print("[DRY RUN] Sin cambios en Planner.")
         for b in buckets_ordered:
             bucket_tasks = [t for t in tasks if t["bucket_name"] == b]
@@ -606,6 +762,8 @@ async def run_import_plan(
     print()
 
     if dry_run:
+        result.dry_run = True
+        result.plan_name = plan_name
         print("[DRY RUN] Sin cambios en Planner.")
         return result
 
@@ -653,6 +811,8 @@ async def run_import_buckets(
     print()
 
     if dry_run:
+        result.dry_run = True
+        result.buckets_total = len(bucket_names)
         print("[DRY RUN] Sin cambios en Planner.")
         for name in bucket_names:
             print(f"  Bucket '{name}'")
@@ -685,13 +845,19 @@ async def run_import_tasks(
     LIMITACIÓN: LABEL_MAP vacío en este modo — labels del CSV no se aplican.
     """
     result = ImportResult()
-    tasks = parse_csv_tasks(csv_path)
+    tasks, date_warnings = parse_csv_tasks(csv_path)
 
     print(f"Tareas   : {len(tasks)}")
     print(f"Llamadas : ~{len(tasks) * 3}")
-    print()
 
+    if not confirm_date_warnings(date_warnings, dry_run):
+        print("Importación cancelada por el usuario.")
+        return result
+
+    print()
     if dry_run:
+        result.dry_run = True
+        result.tasks_total = len(tasks)
         print("[DRY RUN] Sin cambios en Planner.")
         for t in tasks:
             print(f"  PlanID={t['plan_id']} BucketID={t['bucket_id']} -> '{t['title']}'")
@@ -736,6 +902,34 @@ async def run_import_tasks(
     return result
 
 
+async def run_sp_list(
+    site_url: str,
+    folder_path: str,
+    filter_text: str,
+) -> None:
+    """Modo sp-list: lista archivos/carpetas de la librería de documentos de un sitio SharePoint."""
+    settings = Settings()
+    auth = MicrosoftAuthManager(
+        tenant_id=settings.azure_tenant_id,
+        client_id=settings.azure_client_id,
+        client_secret=settings.azure_client_secret,
+    )
+    token = auth.get_token()
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        print(f"Sitio  : {site_url}")
+        print(f"Carpeta: {folder_path or '(raíz)'}\n")
+        site_id = await get_site_id(client, token, site_url)
+        try:
+            items = await list_site_drive_items(client, token, site_id, folder_path)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                print(f'[ERROR] Carpeta no encontrada: "{folder_path}"')
+                return
+            raise
+        _print_docs_table(items, filter_text)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -746,17 +940,31 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Simula sin llamar a la API")
     parser.add_argument(
         "--mode",
-        choices=["full", "plan", "buckets", "tasks", "list", "delete"],
+        choices=["full", "plan", "buckets", "tasks", "list", "delete", "sp-list"],
         default="full",
-        help="Modo: full (default), plan, buckets, tasks, list o delete",
+        help="Modo: full (default), plan, buckets, tasks, list, delete o sp-list",
     )
     parser.add_argument(
-        "--filter", dest="filter_text", default="", help="Filtrar planes por título (modos list/delete)"
+        "--filter", dest="filter_text", default="", help="Filtrar por título/nombre (modos list/delete/sp-list)"
+    )
+    parser.add_argument(
+        "--site-url",
+        default=SHAREPOINT_SITE_URL,
+        help="URL del sitio SharePoint (default: SHAREPOINT_SITE_URL)",
+    )
+    parser.add_argument(
+        "--folder",
+        default="",
+        help="Subcarpeta dentro de la librería (ej: 'Proyectos/2026'). Vacío = raíz.",
     )
     args = parser.parse_args()
 
     if args.mode == "list":
         asyncio.run(run_list(args.group_id, args.filter_text))
+        return
+
+    if args.mode == "sp-list":
+        asyncio.run(run_sp_list(args.site_url, args.folder, args.filter_text))
         return
 
     if args.mode == "delete":
@@ -778,18 +986,27 @@ def main() -> None:
 
     print()
     print("── RESUMEN ──────────────────────────────")
-    print(f"Plan ID   : {result.plan_id or '(dry run)'}")
-    print(f"Buckets   : {len(result.bucket_ids)}")
-    print(f"Tareas OK : {len(result.task_ids)}")
-    print(f"GUIDs OK  : {result.guids_resolved}")
-    if result.guids_failed:
-        print(f"GUIDs FAIL: {len(result.guids_failed)} — {result.guids_failed}")
-    if result.tasks_unassigned:
-        print(f"Sin asignar (vacío): {result.tasks_unassigned}")
-    if result.errors:
-        print(f"Errores   : {len(result.errors)}")
-        for e in result.errors:
-            print(f"  {e}")
+    if result.dry_run:
+        print("Modo      : Simulación — sin cambios en Planner")
+        if result.plan_name:
+            print(f"Plan      : '{result.plan_name}'")
+        if result.buckets_total:
+            print(f"Buckets   : {result.buckets_total}")
+        if result.tasks_total:
+            print(f"Tareas    : {result.tasks_total}")
+    else:
+        print(f"Plan ID   : {result.plan_id or '(sin ID)'}")
+        print(f"Buckets   : {len(result.bucket_ids)}")
+        print(f"Tareas OK : {len(result.task_ids)}")
+        print(f"GUIDs OK  : {result.guids_resolved}")
+        if result.guids_failed:
+            print(f"GUIDs FAIL: {len(result.guids_failed)} — {result.guids_failed}")
+        if result.tasks_unassigned:
+            print(f"Sin asignar: {result.tasks_unassigned}")
+        if result.errors:
+            print(f"Errores   : {len(result.errors)}")
+            for e in result.errors:
+                print(f"  {e}")
     print("─────────────────────────────────────────")
 
 

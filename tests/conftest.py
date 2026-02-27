@@ -115,3 +115,28 @@ def make_async_client_ctx(mock_client):
     ctx.__aenter__ = AsyncMock(return_value=mock_client)
     ctx.__aexit__ = AsyncMock(return_value=False)
     return ctx
+
+
+# ── Fixtures para create_environment ─────────────────────────────────────────
+import create_environment  # noqa: E402 (stubs MCP ya activos)
+
+
+@pytest.fixture
+def fixture_csv1_sample() -> Path:
+    return FIXTURES_DIR / "csv1_sample.csv"
+
+
+@pytest.fixture
+def mock_auth_env(monkeypatch):
+    """Parchea Settings y MicrosoftAuthManager en el namespace de create_environment."""
+    mock_settings = MagicMock()
+    mock_settings.azure_tenant_id = "fake-tenant"
+    mock_settings.azure_client_id = "fake-client"
+    mock_settings.azure_client_secret = "fake-secret"
+
+    mock_mgr = MagicMock()
+    mock_mgr.get_token.return_value = "test-token"
+
+    monkeypatch.setattr(create_environment, "Settings", lambda: mock_settings)
+    monkeypatch.setattr(create_environment, "MicrosoftAuthManager", lambda **kw: mock_mgr)
+    return mock_mgr
