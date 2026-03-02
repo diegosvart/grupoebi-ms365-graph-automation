@@ -56,18 +56,39 @@ TEMPLATE_ACTA = TEMPLATES_DIR / "Acta_de_Inicio_de_Proyecto.docx"
 
 # ── Parsing CSV1 ──────────────────────────────────────────────────────────────
 
+def _strip_id_prefix(project_id: str, raw_name: str) -> str:
+    """Devuelve raw_name sin el prefijo project_id si ya está incluido.
+
+    Tolera cualquier separador inmediato (-, _, espacio).
+    Ejemplos:
+        _strip_id_prefix("PRJ-2026-001", "PRJ-2026-001-Cash-Flow") → "Cash-Flow"
+        _strip_id_prefix("PRJ-2026-001", "Cash-Flow")              → "Cash-Flow"
+    """
+    for sep in ("-", "_", " "):
+        if raw_name.upper().startswith((project_id + sep).upper()):
+            return raw_name[len(project_id) + 1:]
+    return raw_name
+
+
 def parse_csv1(path: Path) -> list[dict[str, Any]]:
     """Lee CSV1 (delimitador ';', UTF-8 BOM) con columnas de entorno de proyecto.
 
     Columnas requeridas: ProjectID, ProjectName, PMEmail, LiderEmail, StartDate, PlannerCSV
+
+    Genera display_name: ProjectName sin el prefijo ProjectID (si ya lo incluye).
+    Esto garantiza que la carpeta SharePoint no duplique el ID:
+        folder = f"{project_id}_{display_name}"  →  PRJ-2026-001_Cash-Flow
     """
     projects: list[dict[str, Any]] = []
     with path.open(encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
         for row in reader:
+            pid = row["ProjectID"].strip()
+            raw_name = row["ProjectName"].strip()
             projects.append({
-                "project_id":   row["ProjectID"].strip(),
-                "project_name": row["ProjectName"].strip(),
+                "project_id":   pid,
+                "project_name": raw_name,
+                "display_name": _strip_id_prefix(pid, raw_name),
                 "pm_email":     row["PMEmail"].strip(),
                 "lider_email":  row["LiderEmail"].strip(),
                 "start_date":   row["StartDate"].strip(),
@@ -354,7 +375,7 @@ async def run_create_environment(
             print(f"  Líder Email: {proj['lider_email']}")
             print(f"  CSV Plan   : {proj['planner_csv']}")
             print(f"  Canal Teams: '{proj['project_name'][:50]}' (standard) en grupo {group_id}")
-            folder_name = f"{proj['project_id']}_{proj['project_name']}"
+            folder_name = f"{proj['project_id']}_{proj['display_name']}"
             print(f"  Carpeta SP : {folder_name}")
             print(f"  Subcarpetas: {', '.join(SUBCARPETAS)}")
             print(f"  Templates  : {TEMPLATE_FICHA.name}, {TEMPLATE_ACTA.name}")
@@ -552,7 +573,7 @@ async def run_create_environment(
 
             # ── [SHAREPOINT — Carpetas] ────────────────────────────────────────
             print("\n  [SHAREPOINT] Creando carpetas de proyecto...")
-            folder_name = f"{proj['project_id']}_{proj['project_name']}"
+            folder_name = f"{proj['project_id']}_{proj['display_name']}"
             folder_id = ""
             folder_url = ""
 
