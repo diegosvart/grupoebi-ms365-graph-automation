@@ -1,0 +1,127 @@
+---
+config:
+  layout: dagre
+---
+flowchart TB
+ subgraph BUCLE_PLAN["Bucle de Planificación"]
+        SP1["Planificación Detallada.
+        Responsable: 
+        PM + Líder 
+        Desglose de tareas y entregables • Validación de dependencias • Asignación de responsables • Definición de fechas 
+        Salida: 
+        Plan estructurado en Planner"]
+        G2{{"⬡ GATEWAY
+        Aprobación del Plan 
+        Responsable: 
+        Sponsor 
+        Salida: 
+        ¿El plan es aprobado?"}}
+  end
+ subgraph BUCLE_EJEC["Bucle de ejecución y seguimiento"]
+        SP2["Ejecución y Seguimiento
+        Responsable: 
+        PM - Equipo 
+        · Ejecuta tareas en To Do 
+        · Actualiza estado en Planner 
+        · Comunica avances en Teams
+        · Reunión semanal de seguimiento
+        · Gestión de bloqueos y riesgos
+        · Control del plan
+        · Validación de avances del negocio"]
+        G3{{"⬡ GATEWAY DE CONTROL
+        Responsable: PM · Líder
+        Salida:
+        ¿Existen desviaciones críticas?"}}
+        REV["Reevaluación del Plan
+        Responsable:
+        PM - Líder - Sponsor
+        • Ajuste de fechas - alcance
+        • Validación
+        Salida:
+        Ajuste del proyecto"]
+  end
+    A(["INICIO 
+    Necesidad u oportunidad detectada - Wish list"]) --> T1["Completar Ficha de Proyecto
+    Responsable: 
+    Solicitante | Líder propuesto
+    Salida:
+    Ficha de Proyecto completada"]
+    T1 --> G1{{"⬡ GATEWAY 
+    Evaluación de Viabilidad
+    Responsables: 
+    PM · Líder · Sponsor
+    Salida: ¿Proyecto viable y aprobado?"}}
+    G1 -- ❌ NO --> FIN_REJ(["🔴 FIN
+    Proyecto rechazado o devuelto para ajustes"])
+    G1 -- ✅ SÍ --> T2["Creación del Entorno Digital
+    Responsable: 
+    PM • Crear canal en Teams • Crear Plan en Planner • Cargar plantilla base de tareas • Dar acceso a participantes definidos 
+    Salida: 
+    Entorno habilitado"]
+    T2 --> T3["Reunión de Inicio
+    Responsable: PM convoca Líder · Sponsor • Presenta el proyecto y su contexto • Confirmar alcance preliminar • Identificar participantes del equipo 
+    Salida: Definir próximos pasos de planificación"]
+    T3 --> SP1
+    SP1 --> G2
+    G2 -- ❌ NO — Ajustar --> SP1
+    G2 -- ✅ SÍ --> KICKOFF["Kick Off 
+    Responsable: 
+    PM convoca · Todos los participantes 
+    • Presentación oficial del proyecto
+    • Comunicación del plan aprobado
+    • Confirmación de roles y fechas
+    • Inicio formal de la ejecución
+    Salida:
+    Toma de conocimiento completo y generalizado"]
+    KICKOFF --> SP2
+    SP2 --> G3
+    G3 -- ✅ SÍ — Reevaluar --> REV
+    REV --> SP2
+    G3 -- ❌ NO — Continuar --> G4{{"⬡ GATEWAY FINAL 
+    Validación de Objetivo
+    Responsable: Sponsor · PM · Líder
+    Salida: 
+    ¿Objetivo del proyecto cumplido?"}}
+    G4 -- ❌ NO --> ACC["Definir acciones correctivas
+    Responsable:
+    Sponsor · PM · Líder
+    Salida:
+    Agendar reunión para nueva ejecución y seguimiento"]
+    ACC --> SP2
+    G4 -- ✅ SÍ --> TF["Cierre Formal
+    Responsable: 
+    PM + Líder
+    • Validar cumplimiento de entregables
+    • Registrar lecciones aprendidas
+    • Comunicar cierre oficial en Teams
+    Salida:
+    Cerrar plan en Planner"]
+    TF --> FIN(["🔵 FIN
+    Proyecto cerrado"])
+
+     A:::inicio
+     T1:::tarea
+     G1:::gateway
+     FIN_REJ:::fin_ko
+     T2:::tarea
+     T3:::tarea
+     SP1:::subproceso
+     G2:::gateway
+     KICKOFF:::kickoff
+     SP2:::subproceso
+     G3:::gateway
+     REV:::ajuste
+     G4:::gateway
+     ACC:::ajuste
+     TF:::tarea
+     FIN:::fin_ok
+    classDef inicio fill:#2ecc71,color:#fff,stroke:#27ae60
+    classDef fin_ok fill:#3498db,color:#fff,stroke:#2980b9
+    classDef fin_ko fill:#e74c3c,color:#fff,stroke:#c0392b
+    classDef tarea fill:#ecf0f1,color:#2c3e50,stroke:#bdc3c7
+    classDef gateway fill:#f39c12,color:#fff,stroke:#e67e22
+    classDef subproceso fill:#d5e8d4,color:#2c3e50,stroke:#82b366
+    classDef ajuste fill:#fff3cd,color:#856404,stroke:#ffc107
+    classDef kickoff fill:#dce3f5,color:#2c3e50,stroke:#7b96d4
+    style BUCLE_PLAN fill:#f0f7f0,stroke:#82b366,stroke-dasharray: 5 5
+    style BUCLE_EJEC fill:#fdf6ec,stroke:#f39c12,stroke-dasharray: 5 5
