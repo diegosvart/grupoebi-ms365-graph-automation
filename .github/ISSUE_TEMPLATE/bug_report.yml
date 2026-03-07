@@ -1,0 +1,114 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Security reminder
+        **NEVER paste credentials, tokens, API keys, real GUIDs, or employee data in this form.**
+        If the bug involves a security vulnerability, see [SECURITY.md](../SECURITY.md) and contact the maintainer directly instead of opening this issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: What happened? What did you expect to happen?
+      placeholder: "When I run `python planner_import.py --mode full --csv ...`, I get the following error..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands and steps to reproduce the issue.
+      placeholder: |
+        1. Run `python planner_import.py --mode full --csv templates/full.csv --group-id <GUID> --dry-run`
+        2. See error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: error_output
+    attributes:
+      label: Error output
+      description: |
+        Paste the full error output here.
+        **IMPORTANT: Replace any real GUIDs, emails, or credentials with placeholders like `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` or `usuario@empresa.com` before pasting.**
+      render: shell
+
+  - type: dropdown
+    id: command
+    attributes:
+      label: Which command or script?
+      options:
+        - planner_import.py
+        - create_environment.py
+        - Both
+        - Other (describe in bug description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode used (if applicable)
+      options:
+        - full
+        - plan
+        - buckets
+        - tasks
+        - list
+        - delete
+        - create-project
+        - onboard-user
+        - offboard-user
+        - N/A
+    validations:
+      required: false
+
+  - type: dropdown
+    id: dry_run
+    attributes:
+      label: Does the bug also happen in --dry-run mode?
+      options:
+        - "Yes — bug appears in dry-run"
+        - "No — only in real execution"
+        - "Did not test with dry-run"
+    validations:
+      required: true
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      placeholder: "e.g., 3.11.7"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other context, screenshots, or relevant information.

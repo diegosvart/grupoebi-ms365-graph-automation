@@ -1,0 +1,125 @@
+name: Workflow Request (RRHH / No tecnico)
+description: Solicitar la ejecucion de un flujo de usuario (alta, baja, cambio de rol, nuevo proyecto)
+title: "[FLUJO] "
+labels: ["workflow-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Para uso de analistas de RRHH y lideres de area
+
+        Usa este formulario para solicitar la ejecucion de un flujo que no puedes ejecutar directamente.
+        Un administrador lo procesara a la brevedad.
+
+        **IMPORTANTE:**
+        - No incluir RUTs, contrasenas, ni datos bancarios en este formulario.
+        - Solo incluir el nombre completo y cargo del colaborador — no mas datos personales.
+        - Si el sistema tiene integracion activa con Talana, el flujo puede ejecutarse automaticamente sin necesitar este formulario.
+
+  - type: dropdown
+    id: flujo
+    attributes:
+      label: Tipo de flujo requerido
+      description: Seleccionar el flujo que necesitas ejecutar
+      options:
+        - Alta de usuario (onboarding nuevo colaborador)
+        - Baja de usuario (offboarding)
+        - Cambio de rol (nuevo cargo o area)
+        - Nuevo entorno de proyecto
+        - Incorporar colaborador a proyecto existente
+        - Otro (describir en contexto adicional)
+    validations:
+      required: true
+
+  - type: input
+    id: colaborador_nombre
+    attributes:
+      label: Nombre completo del colaborador
+      description: Nombre completo tal como aparece en el contrato.
+      placeholder: "Juan Perez Gonzalez"
+    validations:
+      required: true
+
+  - type: input
+    id: cargo
+    attributes:
+      label: Cargo del colaborador
+      description: Cargo oficial segun contrato o Talana.
+      placeholder: "Analista RRHH"
+    validations:
+      required: true
+
+  - type: input
+    id: area
+    attributes:
+      label: Area o departamento
+      placeholder: "Recursos Humanos"
+    validations:
+      required: true
+
+  - type: input
+    id: fecha
+    attributes:
+      label: Fecha efectiva
+      description: Fecha de ingreso (alta), baja efectiva, o fecha de cambio de rol.
+      placeholder: "2026-04-01"
+    validations:
+      required: true
+
+  - type: input
+    id: manager
+    attributes:
+      label: Email del jefatura directa
+      description: Email corporativo del manager o jefatura directa del colaborador.
+      placeholder: "gerente@empresa.com"
+    validations:
+      required: true
+
+  - type: input
+    id: autorizacion
+    attributes:
+      label: Numero de ticket o referencia de autorizacion
+      description: |
+        Numero de ticket, email o referencia que acredita la autorizacion para este flujo.
+        Sin este dato, la solicitud no puede procesarse.
+      placeholder: "TICKET-2026-0123 / Email del 01/04/2026 de Gerencia"
+    validations:
+      required: true
+
+  - type: input
+    id: autorizador
+    attributes:
+      label: Quien autoriza esta solicitud
+      description: Nombre y cargo de quien aprueba este flujo.
+      placeholder: "Maria Gonzalez — Gerente de RRHH"
+    validations:
+      required: true
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto adicional
+      description: |
+        Si el flujo es "Cambio de rol": indicar el cargo y area anterior.
+        Si es "Nuevo proyecto": nombre del proyecto y lista de miembros iniciales (emails).
+        Si es "Incorporacion a proyecto": nombre del proyecto al que se incorpora.
+      placeholder: |
+        Para cambio de rol:
+        - Cargo anterior: Ejecutivo Comercial
+        - Area anterior: Comercial
+        - Nuevo cargo: Ejecutivo Finanzas
+        - Nueva area: Finanzas
+        - Autorizacion manager anterior: TICKET-2026-0100
+        - Autorizacion manager nuevo: TICKET-2026-0101
+
+  - type: checkboxes
+    id: confirmacion
+    attributes:
+      label: Confirmaciones requeridas
+      options:
+        - label: Confirmo que tengo la autorizacion requerida para este flujo
+          required: true
+        - label: No he incluido RUTs, contrasenas ni datos bancarios en este formulario
+          required: true
+        - label: Entiendo que el flujo se ejecutara primero en modo de simulacion (dry-run) antes de operar en produccion
+          required: true

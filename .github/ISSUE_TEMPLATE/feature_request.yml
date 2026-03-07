@@ -1,0 +1,93 @@
+name: Feature Request / Integration Request
+description: Propose a new feature or integration with a Microsoft 365 service
+title: "[FEAT] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to propose new functionality or integrations.
+        For non-technical workflow requests (e.g., "I need to onboard a user"), use the **Workflow Request** form instead.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or need
+      description: What problem are you trying to solve? What business need does this address?
+      placeholder: "Currently, to onboard a user to Intune I have to manually enroll the device in the Intune portal. This takes 30 minutes per device and is error-prone."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What should the tool do? How would you use it?
+      placeholder: |
+        Add a `--mode enroll-device` flag to `create_environment.py` that:
+        1. Calls `POST /deviceManagement/managedDevices` with the device info
+        2. Assigns the default compliance policy
+        3. Logs the device ID in the audit trail
+    validations:
+      required: true
+
+  - type: dropdown
+    id: service
+    attributes:
+      label: Which Microsoft 365 service does this involve?
+      multiple: true
+      options:
+        - Azure Entra ID (users, groups, licenses)
+        - Microsoft Teams (channels, members, tabs)
+        - Microsoft Planner (plans, buckets, tasks)
+        - SharePoint Online (files, folders)
+        - Exchange Online (email, calendar)
+        - Microsoft Intune (devices, compliance)
+        - Power Automate / Azure Functions
+        - Talana HRIS
+        - Other (describe in proposal)
+    validations:
+      required: true
+
+  - type: textarea
+    id: business_justification
+    attributes:
+      label: Business justification
+      description: Why is this needed? What is the estimated impact (time saved, errors reduced, compliance improved)?
+      placeholder: "This would reduce onboarding time from 45 minutes to 5 minutes per user. We onboard ~10 users per month."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Who would use this feature?
+      multiple: true
+      options:
+        - RRHH analyst (non-technical)
+        - Project Manager / Team Lead
+        - Technical administrator
+        - All users
+    validations:
+      required: true
+
+  - type: textarea
+    id: graph_permissions
+    attributes:
+      label: New Graph API permissions required (if known)
+      description: List any new Microsoft Graph API permissions this feature would need. Leave blank if unknown.
+      placeholder: |
+        - `DeviceManagementManagedDevices.ReadWrite.All` (Application)
+        - `DeviceManagementConfiguration.ReadWrite.All` (Application)
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Did you consider other approaches? Why is this the preferred solution?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links to Graph API docs, related issues, mockups, or any other relevant information.

@@ -1,0 +1,31 @@
+# CODEOWNERS
+# Assigns required reviewers to files and directories.
+# Format: pattern  @owner1 @owner2
+#
+# Rules:
+# - The last matching pattern takes precedence.
+# - Owners are required reviewers for PRs that modify matching files.
+# - Replace @username with actual GitHub usernames.
+
+# Default: all files require review from the repository maintainer
+*                                   @diegosvart
+
+# Security-sensitive files — require security lead review
+SECURITY.md                         @diegosvart
+.env.example                        @diegosvart
+hooks/                              @diegosvart
+hooks/guard-sensitive.py            @diegosvart
+
+# Authentication and Graph API core
+# Modify only with security lead awareness
+planner_import.py                   @diegosvart
+create_environment.py               @diegosvart
+
+# Documentation — maintainer review
+docs/                               @diegosvart
+README.md                           @diegosvart
+CONTRIBUTING.md                     @diegosvart
+CHANGELOG.md                        @diegosvart
+
+# GitHub templates — maintainer review
+.github/                            @diegosvart
