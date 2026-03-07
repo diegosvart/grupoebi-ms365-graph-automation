@@ -1,0 +1,71 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.metadata/
+*.iml
+.idea/
+.vscode/
+*.suo
+*.user
+
+# Logs
+*.log
+logs/
+
+# Subdirectorios de proyectos NO relacionados (excluir explicitamente)
+AI-Data-Managment/
+MCP-Server/
+MyAi/
+Python-course/
+amaris-consulting-interview/
+api-rest/
+azure-static-web-app/
+bar-app/
+beta-api-aa2/
+bootcamp-aws/
+crecimiento-infantil/
+devmc-portfolio/
+dont-forget/
+hcingenieros/
+import-planner-project/
+info-fullstack/
+intellicore-pos/
+jarwiss-molt-assistant/
+java-microservices/
+llm-prompts/
+mcp-server-docker/
+my-ai/
+ntbk-security/
+nvidia-agents/
+proyecto-backend-aedd/
+proyecto-backend-aedd.zip
+repo-arquitectura-cloud/
+sii-din-automation/
+site-hc-empresas/
+task-copilot/
+tech-test-tcit/
+tekemi-interview/
+test-joaquin/
+venta-prod-nodejs/
+wallmart-interview/
+wordpress-local-dckr/
