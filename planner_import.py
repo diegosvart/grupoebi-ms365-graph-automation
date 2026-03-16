@@ -141,6 +141,52 @@ def parse_labels(labels_str: str) -> dict[str, bool]:
     return applied
 
 
+def _derive_task_status(percent_complete: int) -> str:
+    """Convierte percentComplete a estado legible.
+    0 → 'notStarted'
+    1-99 → 'inProgress'
+    100 → 'completed'
+    """
+    if percent_complete == 0:
+        return "notStarted"
+    elif percent_complete == 100:
+        return "completed"
+    else:
+        return "inProgress"
+
+
+def _print_report_table(
+    plan_title: str,
+    buckets_dict: dict[str, str],
+    tasks: list[dict[str, Any]],
+) -> None:
+    """Imprime tabla de reporte con tareas agrupadas por bucket.
+    Columns: Bucket | Título | Asignado | Estado | % | Vence
+    """
+    print(f"\n📋 {plan_title}")
+    print("  " + "─" * 120)
+    print(f"  {'Bucket':<20} {'Título':<35} {'Asignado':<20} {'Estado':<12} {'%':>3} {'Vence':<12}")
+    print("  " + "─" * 120)
+
+    for task in tasks:
+        bucket_id = task.get("bucketId", "")
+        bucket_name = buckets_dict.get(bucket_id, "?")
+        title = task.get("title", "")[:34]
+
+        # Extraer asignado (assignments es {userId: {...}})
+        assignments = task.get("assignments", {})
+        assignee = ", ".join(assignments.keys())[:19] if assignments else "(sin asignar)"
+
+        percent = task.get("percentComplete", 0)
+        status = _derive_task_status(percent)
+
+        due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
+
+        print(f"  {bucket_name:<20} {title:<35} {assignee:<20} {status:<12} {percent:>3} {due:<12}")
+    print("  " + "─" * 120)
+    print()
+
+
 def parse_csv(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
     """Lee el CSV y devuelve lista de tareas normalizadas y advertencias de fecha."""
     tasks: list[dict[str, Any]] = []
@@ -364,6 +410,54 @@ async def list_plans(
         next_link: str = data.get("@odata.nextLink", "")
         endpoint = next_link.replace(GRAPH_BASE, "") if next_link else ""
     return plans
+
+
+async def list_buckets(
+    client: httpx.AsyncClient,
+    token: str,
+    plan_id: str,
+) -> list[dict[str, Any]]:
+    """GET /planner/plans/{id}/buckets con paginación @odata.nextLink.
+    Devuelve lista de dicts con al menos: id, name
+    """
+    buckets: list[dict[str, Any]] = []
+    endpoint: str = f"/planner/plans/{plan_id}/buckets"
+    while endpoint:
+        data = await graph_request(client, "GET", endpoint, token)
+        buckets.extend(data.get("value", []))
+        next_link: str = data.get("@odata.nextLink", "")
+        endpoint = next_link.replace(GRAPH_BASE, "") if next_link else ""
+    return buckets
+
+
+async def list_tasks(
+    client: httpx.AsyncClient,
+    token: str,
+    plan_id: str,
+) -> list[dict[str, Any]]:
+    """GET /planner/plans/{id}/tasks con $select y paginación @odata.nextLink.
+    Selecciona: id, title, bucketId, percentComplete, assignments, dueDateTime, createdDateTime
+    """
+    tasks: list[dict[str, Any]] = []
+    select = "id,title,bucketId,percentComplete,assignments,dueDateTime,createdDateTime"
+    endpoint: str = f"/planner/plans/{plan_id}/tasks?$select={select}"
+    while endpoint:
+        data = await graph_request(client, "GET", endpoint, token)
+        tasks.extend(data.get("value", []))
+        next_link: str = data.get("@odata.nextLink", "")
+        endpoint = next_link.replace(GRAPH_BASE, "") if next_link else ""
+    return tasks
+
+
+async def get_task_details(
+    client: httpx.AsyncClient,
+    token: str,
+    task_id: str,
+) -> dict[str, Any]:
+    """GET /planner/tasks/{id}/details para extraer descripción y checklist.
+    Sin paginación (objeto único).
+    """
+    return await graph_request(client, "GET", f"/planner/tasks/{task_id}/details", token)
 
 
 async def delete_plan(
@@ -930,6 +1024,123 @@ async def run_sp_list(
         _print_docs_table(items, filter_text)
 
 
+async def run_report(
+    group_id: str,
+    filter_text: str = "",
+    export_csv: Path | None = None,
+) -> None:
+    """Modo report: lista planes → selección interactiva → imprime tabla de tareas por plan.
+    Opcionalmente exporta a CSV.
+    """
+    # Validar export_csv si se proporciona
+    if export_csv and ".env" in str(export_csv):
+        raise ValueError("No se permite exportar a .env por razones de seguridad")
+
+    settings = Settings()
+    auth = MicrosoftAuthManager(
+        tenant_id=settings.azure_tenant_id,
+        client_id=settings.azure_client_id,
+        client_secret=settings.azure_client_secret,
+    )
+    token = auth.get_token()
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # 1. Listar planes
+        plans = await list_plans(client, token, group_id)
+        if filter_text:
+            plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
+
+        if not plans:
+            print("No se encontraron planes.")
+            return
+
+        _print_plans_table(plans)
+
+        # 2. Selección interactiva
+        raw = input(
+            "  Introduce los números a seleccionar (separados por coma) o 'todos': "
+        ).strip()
+        if raw.lower() == "todos":
+            selected = plans
+        else:
+            indices = [int(x.strip()) - 1 for x in raw.split(",") if x.strip().isdigit()]
+            selected = [plans[i] for i in indices if 0 <= i < len(plans)]
+
+        if not selected:
+            print("  Sin selección. Saliendo.")
+            return
+
+        # 3. Procesar cada plan
+        all_rows: list[dict[str, Any]] = []
+
+        for plan in selected:
+            plan_id = plan["id"]
+            plan_title = plan["title"]
+
+            try:
+                # Obtener buckets y tasks
+                buckets = await list_buckets(client, token, plan_id)
+                buckets_dict = {b["id"]: b["name"] for b in buckets}
+
+                tasks = await list_tasks(client, token, plan_id)
+
+                # Imprimir tabla para este plan
+                _print_report_table(plan_title, buckets_dict, tasks)
+
+                # Preparar filas para exportación
+                for task in tasks:
+                    bucket_id = task.get("bucketId", "")
+                    bucket_name = buckets_dict.get(bucket_id, "")
+                    assignments = task.get("assignments", {})
+                    assignee_ids = ", ".join(assignments.keys())
+
+                    row = {
+                        "PlanID": plan_id,
+                        "PlanTitle": plan_title,
+                        "BucketID": bucket_id,
+                        "BucketName": bucket_name,
+                        "TaskID": task.get("id", ""),
+                        "TaskTitle": task.get("title", ""),
+                        "Assignee": assignee_ids,
+                        "Status": _derive_task_status(task.get("percentComplete", 0)),
+                        "PercentComplete": task.get("percentComplete", 0),
+                        "DueDate": task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "",
+                        "CreatedDate": task.get("createdDateTime", "")[:10] if task.get("createdDateTime") else "",
+                    }
+                    all_rows.append(row)
+
+                await asyncio.sleep(0.3)
+            except Exception as exc:
+                print(f"  ✗ Error procesando '{plan_title}': {exc}")
+
+        # 4. Exportar si se solicita
+        if export_csv and all_rows:
+            export_csv.parent.mkdir(parents=True, exist_ok=True)
+            with export_csv.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "PlanID",
+                        "PlanTitle",
+                        "BucketID",
+                        "BucketName",
+                        "TaskID",
+                        "TaskTitle",
+                        "Assignee",
+                        "Status",
+                        "PercentComplete",
+                        "DueDate",
+                        "CreatedDate",
+                    ],
+                    delimiter=";",
+                )
+                writer.writeheader()
+                writer.writerows(all_rows)
+            print(f"\n✓ Reporte exportado a: {export_csv}")
+        elif all_rows:
+            print(f"\nReporte de {len(all_rows)} tareas completado.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -940,12 +1151,12 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Simula sin llamar a la API")
     parser.add_argument(
         "--mode",
-        choices=["full", "plan", "buckets", "tasks", "list", "delete", "sp-list"],
+        choices=["full", "plan", "buckets", "tasks", "list", "delete", "sp-list", "report"],
         default="full",
-        help="Modo: full (default), plan, buckets, tasks, list, delete o sp-list",
+        help="Modo: full (default), plan, buckets, tasks, list, delete, sp-list o report",
     )
     parser.add_argument(
-        "--filter", dest="filter_text", default="", help="Filtrar por título/nombre (modos list/delete/sp-list)"
+        "--filter", dest="filter_text", default="", help="Filtrar por título/nombre (modos list/delete/sp-list/report)"
     )
     parser.add_argument(
         "--site-url",
@@ -957,7 +1168,15 @@ def main() -> None:
         default="",
         help="Subcarpeta dentro de la librería (ej: 'Proyectos/2026'). Vacío = raíz.",
     )
+    parser.add_argument(
+        "--export", type=Path, default=None,
+        help="CSV de salida para el modo report",
+    )
     args = parser.parse_args()
+
+    if args.mode == "report":
+        asyncio.run(run_report(args.group_id, args.filter_text or "", args.export))
+        return
 
     if args.mode == "list":
         asyncio.run(run_list(args.group_id, args.filter_text))
