@@ -17,9 +17,9 @@ python planner_import.py --mode report --export reports/planner_2026-03-16.csv
 
 ## Características
 
-- **Selección interactiva**: Elige qué planes ver
-- **Tabla por plan**: Buckets, Títulos, Asignados, Estado, % Completado, Fecha de vencimiento
-- **Exportación CSV**: Guarda el reporte en CSV con todas las columnas
+- **Selección interactiva**: Elige qué planes ver. Introduce números separados por coma (`1,2,3`) o escribe `todos`
+- **Tabla por plan**: Buckets, Títulos, Asignados (userIds), Estado, % Completado, Fecha de vencimiento
+- **Exportación CSV**: Guarda el reporte en CSV con delimitador `;` (punto y coma)
 - **Filtrado**: Busca planes por nombre
 - **Sin throttling**: Respeta rate limits de Graph API
 
@@ -64,3 +64,11 @@ El CSV exportado contiene:
 - Status (notStarted, inProgress, completed)
 - PercentComplete (0-100)
 - DueDate, CreatedDate
+
+**Delimitador:** `;` (punto y coma) — compatible con Excel en configuraciones de idioma español.
+
+## Notas importantes
+
+- El campo **Assignee** en la tabla y en el CSV muestra el **userId de Azure AD** (GUID), no el email del usuario.
+- El CSV exportado usa **punto y coma (`;`)** como delimitador — al abrir en Excel seleccionar "Delimitado por punto y coma".
+- Si no hay planes en el grupo, el script imprime "No se encontraron planes." y termina.
