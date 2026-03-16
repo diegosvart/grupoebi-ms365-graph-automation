@@ -10,12 +10,16 @@ import pytest
 import planner_import
 from planner_import import (
     GRAPH_BASE,
+    _derive_task_status,
     create_bucket,
     create_plan,
     create_task_full,
     delete_plan,
+    get_task_details,
     graph_request,
+    list_buckets,
     list_plans,
+    list_tasks,
     resolve_email_to_guid,
 )
 
@@ -369,3 +373,135 @@ class TestCreateTaskFull:
             client, fake_token, "plan-x", "bucket-y", self._base_task(), None
         )
         assert task_id == "returned-task-id"
+
+
+# ── list_buckets ──────────────────────────────────────────────────────────────
+
+class TestListBuckets:
+    async def test_no_next_link_returns_all(self, fake_token):
+        sample_buckets = [
+            {"id": "bucket-1", "name": "Diseño"},
+            {"id": "bucket-2", "name": "Backend"},
+        ]
+        client = await _make_client([_make_response(200, {"value": sample_buckets})])
+        result = await list_buckets(client, fake_token, "plan-123")
+        assert result == sample_buckets
+
+    async def test_with_next_link_paginates(self, fake_token):
+        page1 = {
+            "value": [{"id": "bucket-1", "name": "Diseño"}],
+            "@odata.nextLink": f"{GRAPH_BASE}/planner/plans/plan-123/buckets?$skip=1",
+        }
+        page2 = {"value": [{"id": "bucket-2", "name": "Backend"}]}
+        client = await _make_client([
+            _make_response(200, page1),
+            _make_response(200, page2),
+        ])
+        result = await list_buckets(client, fake_token, "plan-123")
+        assert len(result) == 2
+        assert client.request.call_count == 2
+
+    async def test_endpoint_contains_plan_id(self, fake_token):
+        plan_id = "my-plan-xyz"
+        client = await _make_client([_make_response(200, {"value": []})])
+        await list_buckets(client, fake_token, plan_id)
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert plan_id in url
+        assert "planner/plans" in url
+        assert "buckets" in url
+
+    async def test_empty_returns_empty_list(self, fake_token):
+        client = await _make_client([_make_response(200, {"value": []})])
+        result = await list_buckets(client, fake_token, "plan-123")
+        assert result == []
+
+
+# ── list_tasks ────────────────────────────────────────────────────────────────
+
+class TestListTasks:
+    async def test_no_next_link_returns_all(self, fake_token):
+        sample_tasks = [
+            {
+                "id": "task-1",
+                "title": "Mockup inicio",
+                "bucketId": "bucket-1",
+                "percentComplete": 50,
+                "assignments": {"user-1": {}},
+                "dueDateTime": "2026-03-30T00:00:00Z",
+                "createdDateTime": "2026-03-01T00:00:00Z",
+            },
+        ]
+        client = await _make_client([_make_response(200, {"value": sample_tasks})])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert result == sample_tasks
+
+    async def test_with_next_link_paginates(self, fake_token):
+        task1 = {
+            "id": "task-1",
+            "title": "Task 1",
+            "bucketId": "b1",
+            "percentComplete": 0,
+            "assignments": {},
+            "dueDateTime": None,
+            "createdDateTime": "2026-03-01T00:00:00Z",
+        }
+        task2 = {
+            "id": "task-2",
+            "title": "Task 2",
+            "bucketId": "b1",
+            "percentComplete": 100,
+            "assignments": {"user-2": {}},
+            "dueDateTime": "2026-04-01T00:00:00Z",
+            "createdDateTime": "2026-03-02T00:00:00Z",
+        }
+        page1 = {
+            "value": [task1],
+            "@odata.nextLink": f"{GRAPH_BASE}/planner/plans/plan-123/tasks?$select=...&$skip=1",
+        }
+        page2 = {"value": [task2]}
+        client = await _make_client([
+            _make_response(200, page1),
+            _make_response(200, page2),
+        ])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert len(result) == 2
+        assert client.request.call_count == 2
+
+    async def test_endpoint_contains_plan_id(self, fake_token):
+        plan_id = "my-plan-xyz"
+        client = await _make_client([_make_response(200, {"value": []})])
+        await list_tasks(client, fake_token, plan_id)
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert plan_id in url
+        assert "planner/plans" in url
+        assert "tasks" in url
+
+    async def test_select_in_query_string(self, fake_token):
+        client = await _make_client([_make_response(200, {"value": []})])
+        await list_tasks(client, fake_token, "plan-123")
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert "$select=" in url
+        assert "percentComplete" in url
+        assert "assignments" in url
+
+
+# ── _derive_task_status ────────────────────────────────────────────────────────
+
+class TestDeriveTaskStatus:
+    def test_zero_is_not_started(self):
+        assert _derive_task_status(0) == "notStarted"
+
+    def test_hundred_is_completed(self):
+        assert _derive_task_status(100) == "completed"
+
+    def test_fifty_is_in_progress(self):
+        assert _derive_task_status(50) == "inProgress"
+
+    def test_one_is_in_progress(self):
+        assert _derive_task_status(1) == "inProgress"
+
+    def test_ninety_nine_is_in_progress(self):
+        assert _derive_task_status(99) == "inProgress"
