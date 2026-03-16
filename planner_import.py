@@ -161,7 +161,11 @@ def _print_report_table(
     tasks: list[dict[str, Any]],
 ) -> None:
     """Imprime tabla de reporte con tareas agrupadas por bucket.
-    Columns: Bucket | Título | Asignado | Estado | % | Vence
+
+    Columnas: Bucket | Título | Asignado | Estado | % | Vence
+
+    Nota: el campo Assignee muestra el userId de Azure AD (GUID),
+    no el email ni el nombre del usuario.
     """
     print(f"\n📋 {plan_title}")
     print("  " + "─" * 120)
@@ -1029,8 +1033,16 @@ async def run_report(
     filter_text: str = "",
     export_csv: Path | None = None,
 ) -> None:
-    """Modo report: lista planes → selección interactiva → imprime tabla de tareas por plan.
-    Opcionalmente exporta a CSV.
+    """Lista planes con selección interactiva e imprime tareas por plan, opcionalmente exporta a CSV.
+
+    Args:
+        group_id: ID del grupo M365 cuyos planes se listan.
+        filter_text: Filtra planes cuyo título lo contenga (case-insensitive). Vacío = sin filtro.
+        export_csv: Si se especifica, exporta el reporte a CSV con delimitador ';'.
+                    No puede apuntar a un archivo .env (ValueError).
+
+    Raises:
+        ValueError: Si export_csv contiene '.env' en la ruta.
     """
     # Validar export_csv si se proporciona
     if export_csv and ".env" in str(export_csv):
@@ -1110,8 +1122,10 @@ async def run_report(
                     all_rows.append(row)
 
                 await asyncio.sleep(0.3)
-            except Exception as exc:
-                print(f"  ✗ Error procesando '{plan_title}': {exc}")
+            except httpx.HTTPStatusError as exc:
+                print(f"  ✗ Error Graph al procesar '{plan_title}': {exc.response.status_code}")
+            except httpx.RequestError as exc:
+                print(f"  ✗ Error de red al procesar '{plan_title}': {exc}")
 
         # 4. Exportar si se solicita
         if export_csv and all_rows:

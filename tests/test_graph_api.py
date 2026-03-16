@@ -1,7 +1,9 @@
 """Tests de graph_request, list_plans, delete_plan, create_plan, create_bucket,
-resolve_email_to_guid y create_task_full — sin red real."""
+resolve_email_to_guid, create_task_full, get_task_details, _print_report_table,
+run_report — sin red real."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -11,6 +13,7 @@ import planner_import
 from planner_import import (
     GRAPH_BASE,
     _derive_task_status,
+    _print_report_table,
     create_bucket,
     create_plan,
     create_task_full,
@@ -21,6 +24,7 @@ from planner_import import (
     list_plans,
     list_tasks,
     resolve_email_to_guid,
+    run_report,
 )
 
 
@@ -505,3 +509,247 @@ class TestDeriveTaskStatus:
 
     def test_ninety_nine_is_in_progress(self):
         assert _derive_task_status(99) == "inProgress"
+
+
+# ── get_task_details ──────────────────────────────────────────────────────────
+
+class TestGetTaskDetails:
+    async def test_returns_task_details_dict(self, fake_token):
+        """GET exitoso devuelve dict con description y checklist."""
+        response_data = {
+            "description": "Una descripción detallada",
+            "@odata.etag": 'W/"etag-details"',
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_task_details(client, fake_token, "task-123")
+        assert result == response_data
+        assert "description" in result
+
+    async def test_endpoint_contains_task_id(self, fake_token):
+        """URL contiene el task_id correcto."""
+        task_id = "task-abc-xyz-123"
+        client = await _make_client([_make_response(200, {})])
+        await get_task_details(client, fake_token, task_id)
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert task_id in url
+        assert "planner/tasks" in url
+        assert "details" in url
+
+    async def test_single_call_no_pagination(self, fake_token):
+        """Solo se hace 1 llamada (objeto único, sin @odata.nextLink)."""
+        client = await _make_client([_make_response(200, {"id": "task-1"})])
+        await get_task_details(client, fake_token, "task-123")
+        assert client.request.call_count == 1
+
+    async def test_propagates_http_status_error(self, fake_token):
+        """Error 404 se propaga (raise_for_status lanza HTTPStatusError)."""
+        client = await _make_client([_make_response(404)])
+        with pytest.raises(httpx.HTTPStatusError):
+            await get_task_details(client, fake_token, "nonexistent-task")
+
+
+# ── _print_report_table ────────────────────────────────────────────────────────
+
+class TestPrintReportTable:
+    def test_task_without_due_date_shows_dash(self, capsys):
+        """dueDateTime ausente → imprime '-'."""
+        tasks = [
+            {
+                "title": "Sin fecha",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "-" in captured.out
+
+    def test_task_without_assignments_shows_sin_asignar(self, capsys):
+        """assignments vacío → imprime '(sin asignar)'."""
+        tasks = [
+            {
+                "title": "Tarea huérfana",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "(sin asignar)" in captured.out
+
+    def test_unknown_bucket_id_shows_question_mark(self, capsys):
+        """bucketId no existe en buckets_dict → imprime '?'."""
+        tasks = [
+            {
+                "title": "Tarea",
+                "bucketId": "unknown-bucket",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "?" in captured.out
+
+    def test_title_truncated_to_34_chars(self, capsys):
+        """Título mayor a 34 chars se trunca."""
+        long_title = "A" * 50
+        tasks = [
+            {
+                "title": long_title,
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        # Debe aparecer truncado a 34
+        assert "A" * 34 in captured.out
+        assert "A" * 50 not in captured.out
+
+    def test_empty_task_list_prints_header_only(self, capsys):
+        """Lista vacía → imprime encabezado sin filas de datos."""
+        planner_import._print_report_table("Plan Test", {}, [])
+        captured = capsys.readouterr()
+        assert "Bucket" in captured.out
+        assert "Título" in captured.out
+        assert "Plan Test" in captured.out
+
+    def test_plan_title_in_output(self, capsys):
+        """plan_title aparece en la salida."""
+        plan_title = "MI PLAN ESPECIAL"
+        planner_import._print_report_table(plan_title, {}, [])
+        captured = capsys.readouterr()
+        assert plan_title in captured.out
+
+
+# ── run_report ────────────────────────────────────────────────────────────────
+
+class TestRunReport:
+    async def test_no_plans_exits_early(self, mock_auth, monkeypatch, capsys):
+        """list_plans retorna [] → imprime 'No se encontraron planes.' y retorna."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            mock_list.return_value = []
+            await planner_import.run_report("group-id")
+            captured = capsys.readouterr()
+            assert "No se encontraron planes" in captured.out
+
+    async def test_seleccion_todos_procesa_todos(self, mock_auth, monkeypatch, capsys):
+        """Input 'todos' → llama list_buckets y list_tasks para cada plan."""
+        plans = [
+            {"id": "p1", "title": "Plan 1"},
+            {"id": "p2", "title": "Plan 2"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = []
+                    mock_tasks.return_value = []
+                    monkeypatch.setattr("builtins.input", lambda _: "todos")
+
+                    await planner_import.run_report("group-id")
+
+                    assert mock_buckets.call_count == 2
+                    assert mock_tasks.call_count == 2
+
+    async def test_seleccion_numerica(self, mock_auth, monkeypatch, capsys):
+        """Input '1' → procesa solo el primer plan de la lista."""
+        plans = [
+            {"id": "p1", "title": "Plan 1"},
+            {"id": "p2", "title": "Plan 2"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = []
+                    mock_tasks.return_value = []
+                    monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                    await planner_import.run_report("group-id")
+
+                    assert mock_buckets.call_count == 1
+                    assert mock_tasks.call_count == 1
+
+    async def test_seleccion_vacia_sale(self, mock_auth, monkeypatch, capsys):
+        """Input '' → imprime mensaje de salida y retorna sin procesar planes."""
+        plans = [{"id": "p1", "title": "Plan 1"}]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                mock_list.return_value = plans
+                monkeypatch.setattr("builtins.input", lambda _: "")
+
+                await planner_import.run_report("group-id")
+
+                captured = capsys.readouterr()
+                assert "Sin selección" in captured.out or "Saliendo" in captured.out
+                mock_buckets.assert_not_called()
+
+    async def test_export_csv_creates_file(self, mock_auth, monkeypatch, tmp_path):
+        """--export crea archivo CSV con columnas correctas."""
+        csv_path = tmp_path / "test_report.csv"
+        plans = [
+            {"id": "p1", "title": "Plan 1"},
+        ]
+        buckets = [{"id": "b1", "name": "Backlog"}]
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Task 1",
+                "bucketId": "b1",
+                "assignments": {"user-1": {}},
+                "percentComplete": 50,
+                "dueDateTime": "2026-03-30T00:00:00Z",
+                "createdDateTime": "2026-03-01T00:00:00Z",
+            }
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = buckets
+                    mock_tasks.return_value = tasks
+                    monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                    await planner_import.run_report("group-id", export_csv=csv_path)
+
+                    assert csv_path.exists()
+                    content = csv_path.read_text(encoding="utf-8")
+                    assert "PlanID" in content
+                    assert "TaskTitle" in content
+                    assert ";" in content  # Delimitador
+
+    async def test_export_to_env_raises_value_error(self, mock_auth, monkeypatch):
+        """export_csv con '.env' en ruta lanza ValueError antes de procesar."""
+        env_path = Path("/some/path/.env")
+        with pytest.raises(ValueError, match="seguridad"):
+            await planner_import.run_report("group-id", export_csv=env_path)
+
+    async def test_filter_text_excluye_planes(self, mock_auth, monkeypatch, capsys):
+        """filter_text filtra planes por título — los no coincidentes no aparecen."""
+        plans = [
+            {"id": "p1", "title": "Plan 2026-Q1"},
+            {"id": "p2", "title": "Proyecto Viejo 2025"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = []
+                    mock_tasks.return_value = []
+                    monkeypatch.setattr("builtins.input", lambda _: "todos")
+
+                    await planner_import.run_report("group-id", filter_text="2026")
+
+                    captured = capsys.readouterr()
+                    assert "2026-Q1" in captured.out
+                    assert "Viejo 2025" not in captured.out
