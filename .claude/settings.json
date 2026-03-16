@@ -1,4 +1,9 @@
 {
+  "env": {
+    "MAX_THINKING_TOKENS": "10000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-haiku-4-5-20251001"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -28,6 +33,17 @@
           {
             "type": "command",
             "command": "python3 hooks/guard-sensitive.py"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/pre-compact.py",
+            "async": false
           }
         ]
       }
