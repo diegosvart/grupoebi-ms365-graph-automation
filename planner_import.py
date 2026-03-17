@@ -195,19 +195,19 @@ def _format_datetime(dt_str: str) -> str:
 
 
 def _status_badge(percent: int) -> str:
-    """Genera pill badge HTML coloreado según estado (Completada / En Progreso / Sin Iniciar)."""
+    """Genera pill badge HTML coloreado según estado (Completada / En Progreso / Sin Iniciar). Fix 4.4: colores vibrantes."""
     if percent == 100:
         status_text = "Completada"
-        color = "#107c10"
-        bg_color = "#dff0d8"
+        color = "white"
+        bg_color = "#107c10"  # verde más vibrante, texto blanco
     elif percent > 0:
         status_text = "En Progreso"
-        color = "#ff8c00"
-        bg_color = "#fff4ce"
+        color = "#333"
+        bg_color = "#e07800"  # naranja más vivo
     else:
         status_text = "Sin Iniciar"
-        color = "#8a8886"
-        bg_color = "#f3f2f1"
+        color = "#333"
+        bg_color = "#605e5c"  # gris más oscuro
     return f'<span style="background-color:{bg_color}; color:{color}; padding:4px 8px; border-radius:4px; font-weight:bold;">{status_text}</span>'
 
 
@@ -233,9 +233,9 @@ def _checklist_badge(done: int, total: int) -> str:
 def _build_donut_svg(
     completadas: int, en_progreso: int, sin_iniciar: int, vencidas: int, total: int
 ) -> str:
-    """Genera SVG donut chart con circunferencia 251.33 px (radio 40px)."""
+    """Genera SVG donut chart 150×150 con circunferencia 251.33 px (radio 40px). Fix 4.3: tamaño ampliado."""
     if total == 0:
-        return '<svg width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f3f2f1"/></svg>'
+        return '<svg width="150" height="150" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f3f2f1"/></svg>'
 
     circ = 251.33
     segments = [
@@ -249,13 +249,13 @@ def _build_donut_svg(
     for count, color in segments:
         dash = count / total * circ
         paths.append(
-            f'<circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="16" '
+            f'<circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="18" '
             f'stroke-dasharray="{dash:.1f} {circ - dash:.1f}" '
             f'stroke-dashoffset="-{offset:.1f}" transform="rotate(-90 50 50)"/>'
         )
         offset += dash
     pct = f"{int(completadas / total * 100)}%"
-    legend_svg = f'''<svg width="100" height="100" viewBox="0 0 100 100">
+    legend_svg = f'''<svg width="150" height="150" viewBox="0 0 100 100">
     {"".join(paths)}
     <text x="50" y="55" text-anchor="middle" font-size="20" font-weight="bold" fill="#333">{pct}</text>
   </svg>'''
@@ -582,15 +582,17 @@ def build_report_html(
         else:
             return ("🔵", "#d1ecf1")  # PENDIENTE (azul)
 
-    # Función para determinar color de fila de tarea
+    # Función para determinar color de fila de tarea (Fix 4.3: colores vibrantes alineados con chart)
     def _get_task_row_color(task: dict[str, Any]) -> str:
         pct = task.get("percentComplete", 0)
-        if pct == 100:
-            return "#d4edda"  # verde
         due = _parse_due(task)
+        if pct == 100:
+            return "#c8e6c8"  # verde — Completada (más vivo que #d4edda)
         if due and due < today and pct < 100:
-            return "#fff3cd"  # naranja/amarillo
-        return "#f8f9fa"  # gris claro
+            return "#f9d0d0"  # rojo claro — Vencida (coincide con #d13438 del chart)
+        if pct > 0:
+            return "#ffe0b0"  # naranja claro — En Progreso (coincide con #ff8c00)
+        return "#e8e8e8"  # gris claro — Sin Iniciar (coincide con #8a8886)
 
     # Construir HTML
     html_parts: list[str] = []
@@ -631,26 +633,64 @@ def build_report_html(
     <p style="margin: 5px 0 0 0;">Reporte de gestión · {report_date} · {total} tareas</p>
   </div>
 
-  <div class="kpi-cards">
-    <div class="kpi-card"><span class="number">{total}</span><span class="label">Total</span></div>
-    <div class="kpi-card green"><span class="number">{completadas}</span><span class="label">Completadas</span></div>
-    <div class="kpi-card orange"><span class="number">{en_progreso}</span><span class="label">En Progreso</span></div>
-    <div class="kpi-card gray"><span class="number">{sin_iniciar}</span><span class="label">Sin Iniciar</span></div>
-    <div class="kpi-card red"><span class="number">{vencidas}</span><span class="label">Vencidas</span></div>
-  </div>
-
-  <h3>📊 Distribución de Estado</h3>
-  <div class="donut-container">
-    <div class="donut-cell">
-      {_build_donut_svg(completadas, en_progreso, sin_iniciar, vencidas, total)}
-    </div>
-    <div class="legend-cell">
-      <div class="legend-item"><span class="legend-dot" style="background-color:#107c10;"></span>Completadas: {completadas}</div>
-      <div class="legend-item"><span class="legend-dot" style="background-color:#ff8c00;"></span>En Progreso: {en_progreso}</div>
-      <div class="legend-item"><span class="legend-dot" style="background-color:#8a8886;"></span>Sin Iniciar: {sin_iniciar}</div>
-      <div class="legend-item"><span class="legend-dot" style="background-color:#d13438;"></span>Vencidas: {vencidas}</div>
-    </div>
-  </div>
+  <!-- Fix 4.1-4.4: Layout 50/50 KPI (izquierda) + Donut chart (derecha) -->
+  <h3>📊 Resumen de Gestión</h3>
+  <table width="100%" style="margin-bottom:16px;" cellspacing="8" cellpadding="0" border="0">
+    <tr valign="top">
+      <!-- COLUMNA IZQUIERDA: 5 KPI cards apilados -->
+      <td width="50%" style="padding-right: 12px;">
+        <table width="100%" cellspacing="4" cellpadding="0" border="0">
+          <tr>
+            <td style="border-left:5px solid #0078d4; background:#e8f4fd; padding:10px 14px; margin-bottom:6px; text-align:center;">
+              <span style="font-size:28px; font-weight:bold; color:#0055a0;">{total}</span>
+              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Total</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="border-left:5px solid #107c10; background:#c8e6c8; padding:10px 14px; margin-bottom:6px; text-align:center;">
+              <span style="font-size:28px; font-weight:bold; color:#0d6e0d;">{completadas}</span>
+              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Completadas</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="border-left:5px solid #e07800; background:#ffe0b0; padding:10px 14px; margin-bottom:6px; text-align:center;">
+              <span style="font-size:28px; font-weight:bold; color:#8c5d00;">{en_progreso}</span>
+              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">En Progreso</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="border-left:5px solid #605e5c; background:#e8e8e8; padding:10px 14px; margin-bottom:6px; text-align:center;">
+              <span style="font-size:28px; font-weight:bold; color:#3f3d3b;">{sin_iniciar}</span>
+              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Sin Iniciar</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="border-left:5px solid #d13438; background:#f9d0d0; padding:10px 14px; text-align:center;">
+              <span style="font-size:28px; font-weight:bold; color:#8c2a2e;">{vencidas}</span>
+              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Vencidas</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+      <!-- COLUMNA DERECHA: Donut SVG + leyenda -->
+      <td width="50%" style="text-align: center; padding-left: 12px;">
+        <div style="text-align: center; margin-bottom: 12px;">
+          {_build_donut_svg(completadas, en_progreso, sin_iniciar, vencidas, total)}
+        </div>
+        <!-- Leyenda debajo del donut -->
+        <table style="margin: 8px auto; font-size:11px;">
+          <tr>
+            <td><span style="color:#107c10; font-weight:bold;">■</span> Completadas: {completadas}</td>
+            <td style="padding-left: 12px;"><span style="color:#ff8c00; font-weight:bold;">■</span> En Progreso: {en_progreso}</td>
+          </tr>
+          <tr style="margin-top: 4px;">
+            <td><span style="color:#8a8886; font-weight:bold;">■</span> Sin Iniciar: {sin_iniciar}</td>
+            <td style="padding-left: 12px;"><span style="color:#d13438; font-weight:bold;">■</span> Vencidas: {vencidas}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 
   <h3>📋 Tareas por Bucket</h3>
   <table>
@@ -694,12 +734,21 @@ def build_report_html(
         created = _format_datetime(task.get("createdDateTime", ""))
         created_short = created[:10] if created != "-" else "-"
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified = _format_datetime(task.get("lastModifiedDateTime", ""))
+        modified_full = _format_datetime(task.get("lastModifiedDateTime", ""))
+        # Fix 2: truncar "Modificado" a solo fecha (dd-mm-yyyy)
+        modified = modified_full[:10] if modified_full != "-" else "-"
 
         # Checklist badge coloreado
         cl_total = task.get("ChecklistTotal", 0)
         cl_done = task.get("ChecklistDone", 0)
         checklist_badge_html = _checklist_badge(cl_done, cl_total)
+
+        # Fix 1: Columna % muestra ratio de checklist si está disponible, sino percentComplete
+        if cl_total > 0:
+            checklist_pct = int(cl_done / cl_total * 100)
+            pct_display = f"{checklist_pct}%"
+        else:
+            pct_display = "-"
 
         # Comentarios
         comment_count = task.get("CommentCount", 0)
@@ -711,7 +760,7 @@ def build_report_html(
         <td>{title}</td>
         <td>{assignee}</td>
         <td>{status_badge}</td>
-        <td style="text-align: center;">{percent}%</td>
+        <td style="text-align: center;">{pct_display}</td>
         <td>{created_short}</td>
         <td>{due}</td>
         <td>{modified}</td>
@@ -1924,6 +1973,10 @@ async def run_email_report(
         preview: Si True, guarda HTML en reports/ y abre en navegador. No envía correo.
         to_override: Si no vacío, envía sólo a este email (bypass de asignados).
         fetch_checklist: Si True, obtiene el contador de checklist por tarea (1 llamada Graph extra por tarea).
+
+    Notes:
+        - Realiza pre-fetch paralelo de commentCount para todas las tareas (GET /planner/tasks/{id}?$select=commentCount).
+          Usa semáforo 5 + sleep(0.2) para respetar rate limits. Sin este pre-fetch, commentCount siempre sería 0.
     """
     settings = Settings()
     auth = MicrosoftAuthManager(
@@ -1998,6 +2051,29 @@ async def run_email_report(
                     )
                     checklist_map = {tid: (done, total) for tid, done, total in results}
 
+                # Fix 3: Pre-fetch paralelo de commentCount (GET /planner/tasks/{id}?$select=commentCount)
+                comment_count_map: dict[str, int] = {}
+                sem_cc = asyncio.Semaphore(5)
+
+                async def _fetch_comment_count(task_id: str) -> tuple[str, int]:
+                    async with sem_cc:
+                        try:
+                            t = await graph_request(
+                                client,
+                                "GET",
+                                f"/planner/tasks/{task_id}?$select=commentCount",
+                                token,
+                            )
+                            await asyncio.sleep(0.2)
+                            return task_id, t.get("commentCount", 0)
+                        except (httpx.HTTPStatusError, httpx.RequestError):
+                            return task_id, 0
+
+                cc_results = await asyncio.gather(
+                    *[_fetch_comment_count(t.get("id", "")) for t in tasks]
+                )
+                comment_count_map = {tid: cc for tid, cc in cc_results}
+
                 # Pre-fetch paralelo de nombres de asignados
                 all_guids: set[str] = {
                     g for t in tasks for g in t.get("assignments", {}).keys()
@@ -2031,7 +2107,7 @@ async def run_email_report(
 
                     enriched_tasks.append({
                         **task,
-                        "CommentCount": task.get("commentCount", 0),
+                        "CommentCount": comment_count_map.get(task_id, 0),  # Fix 3: usar pre-fetch en lugar de campo lista
                         "ChecklistDone": cl_done,
                         "ChecklistTotal": cl_total,
                         "priority": task.get("priority", 5),

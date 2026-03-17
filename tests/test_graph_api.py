@@ -1995,3 +1995,260 @@ class TestBuildReportHtmlCreatedColumn:
 
         # Verificar que la fecha aparece en la tabla (formato dd-mm-yyyy)
         assert "15-01-2026" in html, "Fecha de creación no aparece en el HTML"
+
+
+# ── Fixes Round 2: Tests para columnas %, Modificado, y colores ─────────────────
+
+class TestPercentColumnWithChecklist:
+    """Fix 1: Columna % usa ratio de checklist, no percentComplete."""
+
+    def test_percent_column_shows_checklist_ratio(self):
+        """Tarea con ChecklistDone=3, ChecklistTotal=5 → columna % muestra 60%."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Task with Checklist",
+                "bucketId": "bucket1",
+                "percentComplete": 50,  # valor manual del PM (irrelevante)
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 3,
+                "ChecklistTotal": 5,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # La columna % debe mostrar "60%" (3/5)
+        assert "60%" in html, "Columna % no muestra ratio de checklist"
+
+    def test_percent_column_shows_dash_without_checklist(self):
+        """Tarea sin checklist (ChecklistTotal=0) → columna % muestra '-'."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Task without Checklist",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que hay un "-" en la celda de %
+        # Buscar la fila con la tarea
+        assert "Task without Checklist" in html
+        # La columna % debe mostrar "-"
+        assert "<td style=\"text-align: center;\">-</td>" in html
+
+
+class TestModifiedColumnTruncated:
+    """Fix 2: Columna 'Modificado' truncada a solo fecha (dd-mm-yyyy)."""
+
+    def test_modified_column_shows_date_only(self):
+        """lastModifiedDateTime truncado a solo dd-mm-yyyy (sin hora)."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-03-17T14:45:30Z",  # con hora
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Debe estar "17-03-2026" (sin hora) en la columna Modificado
+        assert "17-03-2026" in html, "Fecha de modificación no aparece correctamente"
+
+
+class TestTaskRowColors:
+    """Fix 4.3: Colores de fila alineados con chart."""
+
+    def test_row_color_completed_is_green(self):
+        """Tarea completada (percentComplete=100) → fondo verde."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Completed Task",
+                "bucketId": "bucket1",
+                "percentComplete": 100,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color verde #c8e6c8 en la fila
+        assert '#c8e6c8' in html, "Color verde para tarea completada no encontrado"
+
+    def test_row_color_in_progress_is_orange(self):
+        """Tarea en progreso (0 < percentComplete < 100) → fondo naranja."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "In Progress Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,  # En progreso
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color naranja #ffe0b0 en la fila
+        assert '#ffe0b0' in html, "Color naranja para tarea en progreso no encontrado"
+
+    def test_row_color_overdue_is_red(self):
+        """Tarea vencida (due < today, percentComplete < 100) → fondo rojo."""
+        from datetime import date, timedelta
+        yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Overdue Task",
+                "bucketId": "bucket1",
+                "percentComplete": 30,  # No completada
+                "assignments": {},
+                "dueDateTime": f"{yesterday}T00:00:00Z",  # vencida
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color rojo #f9d0d0 en la fila
+        assert '#f9d0d0' in html, "Color rojo para tarea vencida no encontrado"
+
+    def test_row_color_not_started_is_gray(self):
+        """Tarea sin iniciar (percentComplete=0) → fondo gris."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Not Started Task",
+                "bucketId": "bucket1",
+                "percentComplete": 0,  # Sin iniciar
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color gris #e8e8e8 en la fila
+        assert '#e8e8e8' in html, "Color gris para tarea sin iniciar no encontrado"
+
+
+class TestStatusBadgeVibrantColors:
+    """Fix 4.4: Status badges con colores vibrantes."""
+
+    def test_status_badge_completada_white_on_green(self):
+        """Completada: texto blanco sobre fondo verde #107c10."""
+        from planner_import import _status_badge
+        badge = _status_badge(100)
+        assert "#107c10" in badge, "Color de fondo para 'Completada' incorrecto"
+        assert "Completada" in badge
+        assert "white" in badge, "Color de texto debe ser blanco"
+
+    def test_status_badge_en_progreso_dark_on_orange(self):
+        """En Progreso: texto oscuro sobre naranja #e07800."""
+        from planner_import import _status_badge
+        badge = _status_badge(50)
+        assert "#e07800" in badge, "Color de fondo para 'En Progreso' incorrecto"
+        assert "En Progreso" in badge
+
+    def test_status_badge_sin_iniciar_dark_on_gray(self):
+        """Sin Iniciar: texto oscuro sobre gris #605e5c."""
+        from planner_import import _status_badge
+        badge = _status_badge(0)
+        assert "#605e5c" in badge, "Color de fondo para 'Sin Iniciar' incorrecto"
+        assert "Sin Iniciar" in badge
+
+
+class TestLayoutKPI50Plus50:
+    """Fix 4.1: Layout 50/50 KPI + Chart."""
+
+    def test_html_contains_50_50_table_layout(self):
+        """HTML contiene tabla con width 50% para KPI y 50% para Chart."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que hay dos columnas de 50%
+        assert 'width="50%"' in html, "Layout 50/50 no encontrado en HTML"
+        # Verificar que hay un SVG donut
+        assert '<svg' in html, "SVG donut no encontrado"
+
+    def test_donut_svg_is_150x150(self):
+        """SVG donut es 150×150 (no 100×100)."""
+        from planner_import import _build_donut_svg
+        svg = _build_donut_svg(1, 1, 1, 1, 4)
+        assert 'width="150"' in svg, "SVG width no es 150"
+        assert 'height="150"' in svg, "SVG height no es 150"
+
+    def test_kpi_cards_in_left_column(self):
+        """KPI cards están en columna izquierda."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que hay KPI cards con estilos de border-left
+        assert 'border-left:5px solid' in html, "KPI cards con border-left no encontrados"
