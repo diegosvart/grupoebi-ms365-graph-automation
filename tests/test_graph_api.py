@@ -2189,12 +2189,13 @@ class TestStatusBadgeVibrantColors:
         assert "#e07800" in badge, "Color de fondo para 'En Progreso' incorrecto"
         assert "En Progreso" in badge
 
-    def test_status_badge_sin_iniciar_dark_on_gray(self):
-        """Sin Iniciar: texto oscuro sobre gris #605e5c."""
+    def test_status_badge_sin_iniciar_white_on_gray(self):
+        """Sin Iniciar: texto blanco sobre gris #605e5c (Fix Round 3)."""
         from planner_import import _status_badge
         badge = _status_badge(0)
         assert "#605e5c" in badge, "Color de fondo para 'Sin Iniciar' incorrecto"
         assert "Sin Iniciar" in badge
+        assert "white" in badge, "Color de texto debe ser blanco para mejor contraste"
 
 
 class TestLayoutKPI50Plus50:
@@ -2232,7 +2233,7 @@ class TestLayoutKPI50Plus50:
         assert 'height="150"' in svg, "SVG height no es 150"
 
     def test_kpi_cards_in_left_column(self):
-        """KPI cards están en columna izquierda."""
+        """KPI cards están en columna izquierda (Fix Round 3: grid 2x2 con border-left:4px)."""
         tasks = [
             {
                 "id": "task1",
@@ -2250,5 +2251,57 @@ class TestLayoutKPI50Plus50:
         ]
         buckets_dict = {"bucket1": "Backlog"}
         html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-        # Verificar que hay KPI cards con estilos de border-left
-        assert 'border-left:5px solid' in html, "KPI cards con border-left no encontrados"
+        # Verificar que hay KPI cards con estilos de border-left en el grid 2x2
+        assert 'border-left:4px solid' in html, "KPI cards grid con border-left:4px no encontrados"
+        # Verificar Total con border-left:5px (en la fila superior)
+        assert 'border-left:5px solid #0078d4' in html, "Total card no encontrado"
+
+    def test_total_card_on_top(self):
+        """Total card aparece primero en columna izquierda (Fix Round 3)."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que Total aparece antes del grid 2x2
+        total_idx = html.find('border-left:5px solid #0078d4')
+        grid_idx = html.find('border-left:4px solid #107c10')
+        assert total_idx > 0, "Total card no encontrado"
+        assert grid_idx > 0, "Grid 2x2 no encontrado"
+        assert total_idx < grid_idx, "Total debe aparecer antes del grid 2x2"
+
+    def test_footer_contains_author(self):
+        """Footer contiene texto de autoría de Diego Morales (Fix Round 3)."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que footer contiene el nombre del autor
+        assert "Diego Morales" in html, "Nombre de autor 'Diego Morales' no encontrado en footer"
+        assert "Project Manager 2026" in html, "Título 'Project Manager 2026' no encontrado"
+        assert "automatización de procesos" in html, "Descripción de automatización no encontrada"
