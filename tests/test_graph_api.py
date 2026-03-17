@@ -663,41 +663,6 @@ class TestPrintReportTable:
         captured = capsys.readouterr()
         assert plan_title in captured.out
 
-    def test_modified_column_appears(self, capsys):
-        """Columna 'Modificado' aparece en la salida."""
-        tasks = [
-            {
-                "title": "Tarea",
-                "bucketId": "b1",
-                "percentComplete": 0,
-                "assignments": {},
-                "createdDateTime": "2026-03-10T15:30:00Z",
-            }
-        ]
-        buckets_dict = {"b1": "Backlog"}
-        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
-        captured = capsys.readouterr()
-        assert "Modificado" in captured.out
-        assert "10-03-2026" in captured.out
-
-    def test_task_without_last_modified_shows_dash(self, capsys):
-        """lastModifiedDateTime ausente → imprime '-'."""
-        tasks = [
-            {
-                "title": "Tarea",
-                "bucketId": "b1",
-                "percentComplete": 0,
-                "assignments": {},
-            }
-        ]
-        buckets_dict = {"b1": "Backlog"}
-        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
-        captured = capsys.readouterr()
-        # Debe haber un dash en la columna Modificado
-        lines = [l for l in captured.out.split("\n") if "Tarea" in l]
-        assert len(lines) > 0
-        # Verificar que hay un dash en el campo de fecha modificada
-        assert "-" in captured.out
 
 
 # ── run_report ────────────────────────────────────────────────────────────────
@@ -1039,39 +1004,6 @@ class TestRunReportComments:
                         await planner_import.run_report("group-id", fetch_comments=False)
 
                         mock_comment.assert_not_called()
-
-    async def test_csv_includes_all_comment_columns(self, mock_auth, monkeypatch, tmp_path):
-        """CSV siempre incluye LastCommentText y LastCommentDate, incluso sin --comments."""
-        csv_path = tmp_path / "test_report.csv"
-        plans = [{"id": "p1", "title": "Plan 1"}]
-        buckets = [{"id": "b1", "name": "Backlog"}]
-        tasks = [
-            {
-                "id": "t1",
-                "title": "Task 1",
-                "bucketId": "b1",
-                "conversationThreadId": "thread-123",
-                "assignments": {"user-1": {}},
-                "percentComplete": 50,
-                "dueDateTime": "2026-03-30T00:00:00Z",
-                "createdDateTime": "2026-03-01T00:00:00Z",
-                "lastModifiedDateTime": "2026-03-10T00:00:00Z",
-            }
-        ]
-        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
-            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
-                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
-                    mock_list.return_value = plans
-                    mock_buckets.return_value = buckets
-                    mock_tasks.return_value = tasks
-                    monkeypatch.setattr("builtins.input", lambda _: "1")
-
-                    await planner_import.run_report("group-id", export_csv=csv_path, fetch_comments=False)
-
-                    assert csv_path.exists()
-                    content = csv_path.read_text(encoding="utf-8")
-                    assert "LastCommentText" in content
-                    assert "LastCommentDate" in content
 
 
 class TestPrintKpiBlock:
@@ -1969,33 +1901,6 @@ class TestBuildReportHtmlBucketOrder:
 class TestBuildReportHtmlCreatedColumn:
     """Test para verificar columna 'Creado' en HTML."""
 
-    def test_created_column_visible(self):
-        """Columna 'Creado' está en el HTML con fecha válida."""
-        tasks = [
-            {
-                "id": "task1",
-                "title": "Test Task",
-                "bucketId": "bucket1",
-                "percentComplete": 50,
-                "assignments": {},
-                "dueDateTime": None,
-                "createdDateTime": "2026-01-15T10:30:00Z",
-                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
-                "CommentCount": 0,
-                "ChecklistDone": 0,
-                "ChecklistTotal": 0,
-            }
-        ]
-        buckets_dict = {"bucket1": "Backlog"}
-
-        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-
-        # Verificar que el header tiene "Creado"
-        assert "<th>Creado</th>" in html, "Columna 'Creado' no está en el header"
-
-        # Verificar que la fecha aparece en la tabla (formato dd-mm-yyyy)
-        assert "15-01-2026" in html, "Fecha de creación no aparece en el HTML"
-
 
 # ── Fixes Round 2: Tests para columnas %, Modificado, y colores ─────────────────
 
@@ -2050,29 +1955,6 @@ class TestPercentColumnWithChecklist:
         assert "<td style=\"text-align: center;\">-</td>" in html
 
 
-class TestModifiedColumnTruncated:
-    """Fix 2: Columna 'Modificado' truncada a solo fecha (dd-mm-yyyy)."""
-
-    def test_modified_column_shows_date_only(self):
-        """createdDateTime truncado a solo dd-mm-yyyy (sin hora)."""
-        tasks = [
-            {
-                "id": "task1",
-                "title": "Test Task",
-                "bucketId": "bucket1",
-                "percentComplete": 50,
-                "assignments": {},
-                "dueDateTime": None,
-                "createdDateTime": "2026-01-15T10:30:00Z",
-                "CommentCount": 0,
-                "ChecklistDone": 0,
-                "ChecklistTotal": 0,
-            }
-        ]
-        buckets_dict = {"bucket1": "Backlog"}
-        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-        # Debe estar "15-01-2026" (sin hora) en la columna Modificado
-        assert "15-01-2026" in html, "Fecha de creación no aparece correctamente"
 
 
 class TestTaskRowColors:

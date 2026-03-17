@@ -271,14 +271,14 @@ def _print_report_table(
 ) -> None:
     """Imprime tabla de reporte con tareas agrupadas por bucket.
 
-    Columnas: Bucket | Título | Asignado | Estado | % | Vence | Modificado | Coment. [| Checklist] [| Último comentario]
+    Columnas: Bucket | Título | Asignado | Estado | % | Vence [| Checklist] [| Último comentario]
 
     Nota: el campo Assignee muestra el userId de Azure AD (GUID),
     no el email ni el nombre del usuario.
     """
     print(f"\n📋 {plan_title}")
-    # Calculando ancho: 20+35+20+12+3+12+16+7 = 125 base + checklist 8 + comentario 39
-    base_width = 20 + 35 + 20 + 12 + 3 + 12 + 16 + 7  # 125
+    # Calculando ancho: 20+35+20+12+3+12 = 102 base + checklist 8 + comentario 39
+    base_width = 20 + 35 + 20 + 12 + 3 + 12  # 102
     checklist_width = 8 if show_checklist else 0
     comments_width = 39 if show_comments else 0
     width = base_width + checklist_width + comments_width
@@ -291,8 +291,6 @@ def _print_report_table(
         f"{'Estado':<12}",
         f"{'%':>3}",
         f"{'Vence':<12}",
-        f"{'Modificado':<16}",
-        f"{'Coment.':<7}",
     ]
     if show_checklist:
         header_parts.append(f"{'Checklist':<8}")
@@ -315,8 +313,6 @@ def _print_report_table(
         status = _derive_task_status(percent)
 
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified = _format_datetime(task.get("createdDateTime", ""))
-        comment_count = task.get("CommentCount", 0)
 
         # Checklist: mostrar x/y si show_checklist, sino "-"
         cl_total = task.get("ChecklistTotal", 0)
@@ -331,8 +327,6 @@ def _print_report_table(
             f"{status:<12}",
             f"{percent:>3}",
             f"{due:<12}",
-            f"{modified:<16}",
-            f"{comment_count:<7}",
         ]
         if show_checklist:
             row_parts.append(f"{checklist_display:<8}")
@@ -704,11 +698,8 @@ def build_report_html(
         <th>Asignado</th>
         <th>Estado</th>
         <th>%</th>
-        <th>Creado</th>
         <th>Vence</th>
-        <th>Modificado</th>
         <th>Checklist</th>
-        <th>Comentarios</th>
       </tr>
     </thead>
     <tbody>""")
@@ -734,27 +725,19 @@ def build_report_html(
 
         percent = task.get("percentComplete", 0)
         status_badge = _status_badge(percent)
-        created = _format_datetime(task.get("createdDateTime", ""))
-        created_short = created[:10] if created != "-" else "-"
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified_full = _format_datetime(task.get("createdDateTime", ""))
-        # Fix 2: truncar "Modificado" a solo fecha (dd-mm-yyyy)
-        modified = modified_full[:10] if modified_full != "-" else "-"
 
         # Checklist badge coloreado
         cl_total = task.get("ChecklistTotal", 0)
         cl_done = task.get("ChecklistDone", 0)
         checklist_badge_html = _checklist_badge(cl_done, cl_total)
 
-        # Fix 1: Columna % muestra ratio de checklist si está disponible, sino percentComplete
+        # Columna % muestra ratio de checklist si está disponible, sino percentComplete
         if cl_total > 0:
             checklist_pct = int(cl_done / cl_total * 100)
             pct_display = f"{checklist_pct}%"
         else:
             pct_display = "-"
-
-        # Comentarios
-        comment_count = task.get("CommentCount", 0)
 
         row_color = _get_task_row_color(task)
 
@@ -764,11 +747,8 @@ def build_report_html(
         <td>{assignee}</td>
         <td>{status_badge}</td>
         <td style="text-align: center;">{pct_display}</td>
-        <td>{created_short}</td>
         <td>{due}</td>
-        <td>{modified}</td>
         <td style="text-align: center;">{checklist_badge_html}</td>
-        <td style="text-align: center;">{comment_count}</td>
       </tr>""")
 
     html_parts.append("""    </tbody>
@@ -1911,10 +1891,6 @@ async def run_report(
                         "PercentComplete": task.get("percentComplete", 0),
                         "DueDate": task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "",
                         "CreatedDate": task.get("createdDateTime", "")[:10] if task.get("createdDateTime") else "",
-                        "LastModified": _format_datetime(task.get("createdDateTime", "")),
-                        "LastCommentText": task.get("LastCommentText", ""),
-                        "LastCommentDate": task.get("LastCommentDate", ""),
-                        "CommentCount": task.get("CommentCount", 0),
                         "ChecklistDone": task.get("ChecklistDone", 0),
                         "ChecklistTotal": task.get("ChecklistTotal", 0),
                     }
@@ -1944,10 +1920,6 @@ async def run_report(
                         "PercentComplete",
                         "DueDate",
                         "CreatedDate",
-                        "LastModified",
-                        "LastCommentText",
-                        "LastCommentDate",
-                        "CommentCount",
                         "ChecklistDone",
                         "ChecklistTotal",
                     ],
