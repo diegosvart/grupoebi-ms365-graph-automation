@@ -13,7 +13,10 @@ import planner_import
 from planner_import import (
     GRAPH_BASE,
     _derive_task_status,
+    _parse_due,
+    _print_kpi_block,
     _print_report_table,
+    build_report_html,
     create_bucket,
     create_plan,
     create_task_full,
@@ -25,7 +28,9 @@ from planner_import import (
     list_plans,
     list_tasks,
     resolve_email_to_guid,
+    resolve_guid_to_email,
     run_report,
+    send_mail_report,
 )
 
 
@@ -1065,3 +1070,577 @@ class TestRunReportComments:
                     content = csv_path.read_text(encoding="utf-8")
                     assert "LastCommentText" in content
                     assert "LastCommentDate" in content
+
+
+class TestPrintKpiBlock:
+    """Tests para _print_kpi_block — 14 tests."""
+
+    def _make_kpi_task(
+        self,
+        bucket_id="b1",
+        percent=0,
+        due_days=None,
+        modified_days=None,
+        comment_text="",
+    ) -> dict:
+        """Factory helper para crear tareas de test.
+
+        due_days: None = sin fecha, <0 = vencida, >0 = futura
+        modified_days: None = sin dato, número = días atrás
+        """
+        from datetime import date, timedelta
+
+        today = date.today()
+        due = None
+        if due_days is not None:
+            due = (today + timedelta(days=due_days)).isoformat() + "T00:00:00Z"
+        modified = "-"
+        if modified_days is not None:
+            modified = (today - timedelta(days=modified_days)).isoformat() + "T00:00:00Z"
+        return {
+            "id": "tid",
+            "title": "Test task",
+            "bucketId": bucket_id,
+            "percentComplete": percent,
+            "assignments": {},
+            "dueDateTime": due,
+            "lastModifiedDateTime": modified,
+            "LastCommentText": comment_text,
+            "LastCommentDate": "",
+            "priority": 5,
+        }
+
+    def test_empty_task_list(self, capsys):
+        """Lista vacía no lanza excepción, imprime encabezado con plan_title."""
+        tasks = []
+        buckets_dict = {}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        # Con lista vacía, _print_kpi_block retorna sin imprimir nada
+        assert captured.out == ""
+
+    def test_totals_correct(self, capsys):
+        """1 comp + 1 inProgress + 1 notStarted → totales y % en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "Total: 3" in captured.out
+        assert "Completadas: 1" in captured.out
+        assert "En progreso: 1" in captured.out
+        assert "Sin iniciar: 1" in captured.out
+
+    def test_vencidas_count(self, capsys):
+        """2 tareas con due pasado y <100%, 1 completada pasada → vencidas = 2."""
+        from datetime import date, timedelta
+
+        today = date.today()
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, due_days=-1),  # vencida
+            self._make_kpi_task(bucket_id="b1", percent=50, due_days=-2),  # vencida
+            self._make_kpi_task(bucket_id="b1", percent=100, due_days=-3),  # completada, no cuenta
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "Vencidas (no completadas): 2" in captured.out
+
+    def test_vencidas_zero_no_alert(self, capsys):
+        """0 vencidas → output contiene '0' sin alertas."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, due_days=5),
+            self._make_kpi_task(bucket_id="b1", percent=50, due_days=10),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "Vencidas (no completadas): 0" in captured.out
+
+    def test_signal_cuello_inprogreso_con_vencidas(self, capsys):
+        """4/6 inProgress + 1 vencida → 'CUELLO' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=50, due_days=-1),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "CUELLO" in captured.out
+
+    def test_signal_cuello_sin_completadas(self, capsys):
+        """4/7 inProgress + 0 completadas → 'CUELLO' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "CUELLO" in captured.out
+
+    def test_signal_gateway_vencidas(self, capsys):
+        """bucket 'Gateway' + 1 vencida → 'GATEWAY' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, due_days=-1),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+        ]
+        buckets_dict = {"b1": "Gateway"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "GATEWAY" in captured.out
+
+    def test_signal_fluye(self, capsys):
+        """5/8 completadas → 'FLUYE' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "FLUYE" in captured.out
+
+    def test_signal_pendiente(self, capsys):
+        """todo notStarted → 'PENDIENTE' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "PENDIENTE" in captured.out
+
+    def test_bucket_vacio_dash(self, capsys):
+        """bucket en buckets_dict sin tareas → '—' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog", "b2": "EmptyBucket"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        # EmptyBucket debe tener '—' como señal
+        assert "—" in captured.out
+
+    def test_no_comments_hides_cobertura(self, capsys):
+        """show_comments=False → 'Cobertura de gestión' NO en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, comment_text="test"),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=False)
+        captured = capsys.readouterr()
+        assert "Cobertura de gestión por bucket:" not in captured.out
+
+    def test_con_comments_cobertura_aparece(self, capsys):
+        """show_comments=True + tasks con texto → 'Cobertura de gestión' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, comment_text="test"),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        assert "Cobertura de gestión por bucket:" in captured.out
+
+    def test_urgentes_sin_comentario(self, capsys):
+        """tarea sin comentario + due en 3 días → aparece en 'vencimiento próximo'."""
+        tasks = [
+            self._make_kpi_task(
+                bucket_id="b1",
+                percent=0,
+                due_days=3,
+                comment_text="",
+            ),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        assert "Sin comentario con vencimiento próximo" in captured.out
+        assert "Test task" in captured.out
+
+    def test_stagnadas_skipped_when_no_data(self, capsys):
+        """todos lastModifiedDateTime = '-' → 'Estancadas' NO en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, modified_days=None),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=False)
+        captured = capsys.readouterr()
+        # Sin datos de lastModified, no debe mostrar "Estancadas"
+        assert "Estancadas" not in captured.out or "0 tareas" not in captured.out
+
+
+# ── TestResolveGuidToEmail ────────────────────────────────────────────────────
+
+class TestResolveGuidToEmail:
+    async def test_returns_mail_field(self, fake_token):
+        """Si 'mail' está presente, retorna ese valor."""
+        client = await _make_client(
+            [_make_response(200, {"id": "user-guid", "mail": "user@example.com"})]
+        )
+        result = await resolve_guid_to_email(client, fake_token, "user-guid")
+        assert result == "user@example.com"
+
+    async def test_falls_back_to_upn(self, fake_token):
+        """Si 'mail' es vacío, retorna 'userPrincipalName'."""
+        client = await _make_client(
+            [_make_response(200, {"id": "user-guid", "mail": None, "userPrincipalName": "user@tenant.onmicrosoft.com"})]
+        )
+        result = await resolve_guid_to_email(client, fake_token, "user-guid")
+        assert result == "user@tenant.onmicrosoft.com"
+
+    async def test_http_error_returns_none(self, fake_token):
+        """Si falla (HTTPStatusError), retorna None sin lanzar excepción."""
+        client = await _make_client([_make_response(404)])
+        result = await resolve_guid_to_email(client, fake_token, "nonexistent-guid")
+        assert result is None
+
+
+# ── TestBuildReportHtml ───────────────────────────────────────────────────────
+
+class TestBuildReportHtml:
+    def test_returns_string(self):
+        """Retorna str, no vacío."""
+        html = build_report_html("Test Plan", {}, [], "01-01-2026")
+        assert isinstance(html, str)
+        assert len(html) > 0
+
+    def test_plan_title_in_html(self):
+        """Plan title aparece en el HTML."""
+        html = build_report_html("Mi Plan Especial", {}, [], "01-01-2026")
+        assert "Mi Plan Especial" in html
+
+    def test_task_title_in_html(self):
+        """Título de tarea aparece en el HTML."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Mi Tarea Importante",
+                "bucketId": "b1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": "2026-03-20T00:00:00Z",
+            }
+        ]
+        html = build_report_html("Test", {"b1": "Backlog"}, tasks, "01-01-2026")
+        assert "Mi Tarea Importante" in html
+
+    def test_bucket_name_in_html(self):
+        """Nombre de bucket aparece en el HTML."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Task",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        html = build_report_html("Test", {"b1": "Mi Bucket Especial"}, tasks, "01-01-2026")
+        assert "Mi Bucket Especial" in html
+
+
+# ── TestSendMailReport ────────────────────────────────────────────────────────
+
+class TestSendMailReport:
+    async def test_calls_sendmail_endpoint(self, fake_token):
+        """graph_request llamado con /me/sendMail."""
+        client = await _make_client([_make_response(202)])
+        await send_mail_report(
+            client, fake_token, ["user@example.com"], "Subject", "<p>Body</p>"
+        )
+        args, kwargs = client.request.call_args
+        assert "/me/sendMail" in args[1]
+
+    async def test_payload_has_recipients(self, fake_token):
+        """Payload contiene toRecipients con los emails."""
+        client = await _make_client([_make_response(202)])
+        await send_mail_report(
+            client, fake_token, ["user1@example.com", "user2@example.com"], "Subj", "<p>Body</p>"
+        )
+        _, kwargs = client.request.call_args
+        payload = kwargs["json"]
+        recipients = payload["message"]["toRecipients"]
+        emails = [r["emailAddress"]["address"] for r in recipients]
+        assert "user1@example.com" in emails
+        assert "user2@example.com" in emails
+
+    async def test_subject_in_payload(self, fake_token):
+        """Subject correcto en message.subject."""
+        client = await _make_client([_make_response(202)])
+        await send_mail_report(
+            client, fake_token, ["user@example.com"], "Mi Asunto", "<p>Body</p>"
+        )
+        _, kwargs = client.request.call_args
+        payload = kwargs["json"]
+        assert payload["message"]["subject"] == "Mi Asunto"
+
+    async def test_empty_recipients_raises(self, fake_token):
+        """Lista vacía lanza ValueError, no llama a Graph."""
+        client = await _make_client([])
+        with pytest.raises(ValueError, match="to_emails no puede estar vacío"):
+            await send_mail_report(client, fake_token, [], "Subject", "<p>Body</p>")
+        client.request.assert_not_called()
+
+
+# ── TestRunEmailReport ────────────────────────────────────────────────────────
+
+class TestRunEmailReport:
+    async def test_sends_for_each_plan(self, fake_token):
+        """send_mail_report llamado una vez por plan seleccionado."""
+        # Mock list_plans, list_buckets, list_tasks, resolve_guid_to_email, build_report_html, send_mail_report
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_list_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_list_tasks, \
+             patch.object(planner_import, "resolve_guid_to_email", new_callable=AsyncMock) as mock_resolve, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+            mock_list_plans.return_value = [
+                {"id": "plan1", "title": "Plan 1"},
+                {"id": "plan2", "title": "Plan 2"},
+            ]
+            mock_list_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_list_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "percentComplete": 50,
+                    "assignments": {"guid1": {}},
+                }
+            ]
+            mock_resolve.return_value = "user@example.com"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id")
+            # send_mail_report debe haber sido llamado 1 vez (solo el plan seleccionado)
+            assert mock_send.call_count == 1
+
+    async def test_skips_plan_with_no_assignees(self, fake_token):
+        """Plan sin asignados → imprime aviso, no llama send_mail_report."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_list_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_list_tasks, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+            mock_list_plans.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_list_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_list_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "percentComplete": 50,
+                    "assignments": {},  # sin asignados
+                }
+            ]
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id")
+            # send_mail_report NO debe ser llamado
+            mock_send.assert_not_called()
+
+    async def test_filter_text_applied(self, fake_token):
+        """Planes que no coinciden con filter_text son ignorados."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value=""):
+            mock_list_plans.return_value = [
+                {"id": "plan1", "title": "Project A"},
+                {"id": "plan2", "title": "Project B"},
+            ]
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", filter_text="Project A")
+            # list_plans debe llamarse, pero el filtro se aplica en memoria
+            assert mock_list_plans.call_count == 1
+
+
+class TestRunEmailReportPreview:
+    """Tests para --preview flag en email-report."""
+
+    async def test_preview_saves_html_file(self, fake_token):
+        """Con preview=True, se crea un archivo .html en reports/."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"), \
+             patch("webbrowser.open") as mock_browser, \
+             patch.object(Path, "write_text") as mock_write:
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1", "assignments": {}, "percentComplete": 0}
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", preview=True)
+            # Debe haberse creado el archivo
+            mock_write.assert_called_once()
+            args, kwargs = mock_write.call_args
+            assert args[0] == "<html>test</html>"
+            assert kwargs.get("encoding") == "utf-8"
+
+    async def test_preview_does_not_call_send(self, fake_token):
+        """Con preview=True, send_mail_report NO es llamado."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"), \
+             patch("webbrowser.open"), \
+             patch.object(Path, "write_text"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1", "assignments": {}, "percentComplete": 0}
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", preview=True)
+            # send_mail_report NO debe ser llamado
+            mock_send.assert_not_called()
+
+    async def test_preview_opens_browser(self, fake_token):
+        """Con preview=True, webbrowser.open es llamado una vez por plan."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"), \
+             patch("webbrowser.open") as mock_browser, \
+             patch.object(Path, "write_text"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1", "assignments": {}, "percentComplete": 0}
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", preview=True)
+            # webbrowser.open debe ser llamado una vez
+            mock_browser.assert_called_once()
+            call_args = mock_browser.call_args[0][0]
+            assert "preview_" in call_args
+            assert ".html" in call_args
+
+
+class TestRunEmailReportTo:
+    """Tests para --to <email> flag en email-report."""
+
+    async def test_to_override_sends_to_single_email(self, fake_token):
+        """Con to_override, send_mail_report es llamado con [to_override]."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "resolve_guid_to_email", new_callable=AsyncMock) as mock_resolve, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "assignments": {"guid1": {}},  # tiene asignado
+                    "percentComplete": 0,
+                }
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", to_override="dmorales@grupoebi.cl")
+
+            # send_mail_report debe ser llamado con [to_override]
+            mock_send.assert_called_once()
+            call_args = mock_send.call_args
+            assert call_args[0][2] == ["dmorales@grupoebi.cl"]
+            # resolve_guid_to_email NO debe ser llamado (bypass de resolución)
+            mock_resolve.assert_not_called()
+
+    async def test_to_override_skips_guid_resolution(self, fake_token):
+        """Con to_override, resolve_guid_to_email NO es llamado."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "resolve_guid_to_email", new_callable=AsyncMock) as mock_resolve, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "assignments": {"guid1": {}, "guid2": {}},  # múltiples asignados
+                    "percentComplete": 0,
+                }
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", to_override="pm@example.com")
+
+            # resolve_guid_to_email NO debe ser llamado
+            mock_resolve.assert_not_called()
+            # send_mail_report debe ser llamado con el email simple
+            mock_send.assert_called_once()
+            call_args = mock_send.call_args
+            assert call_args[0][2] == ["pm@example.com"]

@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import uuid
+import webbrowser
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -69,6 +70,9 @@ PRIORITY_MAP: dict[str, int] = {
 
 # Se construye en runtime por configure_plan_labels(): {"TI": "category1", ...}
 LABEL_MAP: dict[str, str] = {}
+
+# Cache de resolución GUID → email (para modo email-report)
+_GUID_TO_EMAIL_CACHE: dict[str, str | None] = {}
 
 
 # ── Transformaciones ──────────────────────────────────────────────────────────
@@ -156,6 +160,17 @@ def _derive_task_status(percent_complete: int) -> str:
         return "inProgress"
 
 
+def _parse_due(task: dict[str, Any]) -> date | None:
+    """Extrae dueDateTime de una tarea como objeto date, o None si no tiene."""
+    raw = task.get("dueDateTime") or ""
+    if not raw or raw == "-":
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
 def _print_report_table(
     plan_title: str,
     buckets_dict: dict[str, str],
@@ -203,6 +218,371 @@ def _print_report_table(
             print(f"  {bucket_name:<20} {title:<35} {assignee:<20} {status:<12} {percent:>3} {due:<12} {modified:<12}")
     print("  " + "─" * width)
     print()
+
+
+def _print_kpi_block(
+    plan_title: str,
+    buckets_dict: dict[str, str],
+    tasks: list[dict[str, Any]],
+    show_comments: bool = False,
+) -> None:
+    """Imprime bloque de KPIs con métricas globales, señales por bucket y alertas."""
+    if not tasks:
+        return
+
+    today = date.today()
+    total = len(tasks)
+    completadas = sum(1 for t in tasks if t.get("percentComplete", 0) == 100)
+    en_progreso = sum(1 for t in tasks if 0 < t.get("percentComplete", 0) < 100)
+    sin_iniciar = sum(1 for t in tasks if t.get("percentComplete", 0) == 0)
+    vencidas = sum(
+        1 for t in tasks
+        if _parse_due(t) and _parse_due(t) < today and t.get("percentComplete", 0) < 100
+    )
+
+    # Estancadas: >7 días sin modificar (graceful skip si no disponible)
+    modified_available = any(
+        t.get("lastModifiedDateTime") not in ("", "-", None) for t in tasks
+    )
+    stagnadas = []
+    if modified_available:
+        cutoff = today - timedelta(days=7)
+        stagnadas = [
+            t for t in tasks
+            if t.get("percentComplete", 0) < 100
+            and t.get("lastModifiedDateTime") not in ("", "-", None)
+            and datetime.fromisoformat(
+                t["lastModifiedDateTime"].replace("Z", "+00:00")
+            ).date() < cutoff
+        ]
+
+    # Imprime encabezado
+    kpi_width = 85
+    print("  " + "─" * kpi_width)
+    print(f"  KPIs — {plan_title}")
+    print("  " + "─" * kpi_width)
+
+    # Métricas globales
+    pct_comp = (completadas / total * 100) if total > 0 else 0
+    pct_inprog = (en_progreso / total * 100) if total > 0 else 0
+    pct_noinit = (sin_iniciar / total * 100) if total > 0 else 0
+
+    print(f"  Total: {total}   ✅ Completadas: {completadas} ({pct_comp:.0f}%)   🔄 En progreso: {en_progreso} ({pct_inprog:.0f}%)   ⏸ Sin iniciar: {sin_iniciar} ({pct_noinit:.0f}%)")
+    print(f"  Vencidas (no completadas): {vencidas}")
+
+    # Cobertura de gestión si --comments
+    if show_comments:
+        commented = sum(1 for t in tasks if t.get("LastCommentText", "").strip())
+        pct_commented = (commented / total * 100) if total > 0 else 0
+        print(f"  Gestión (comentarios): {commented}/{total} comentadas ({pct_commented:.0f}%)")
+
+    # Estancadas
+    if modified_available and stagnadas:
+        print(f"  Estancadas >7d sin modificar: {len(stagnadas)} tareas")
+
+    print("  " + "─" * kpi_width)
+    print()
+
+    # Algoritmo de señal por bucket
+    def _bucket_signal(bucket_name: str, bucket_tasks: list) -> str:
+        bucket_total = len(bucket_tasks)
+        if bucket_total == 0:
+            return "—"
+        comp = sum(1 for t in bucket_tasks if t.get("percentComplete", 0) == 100)
+        inprog = sum(1 for t in bucket_tasks if 0 < t.get("percentComplete", 0) < 100)
+        venc = sum(
+            1 for t in bucket_tasks
+            if _parse_due(t) and _parse_due(t) < today and t.get("percentComplete", 0) < 100
+        )
+        is_gateway = "gateway" in bucket_name.lower()
+
+        if is_gateway and venc > 0:
+            return "⛔ GATEWAY"
+        if (inprog / bucket_total > 0.6 and venc > 0) or (inprog / bucket_total > 0.5 and comp == 0):
+            return "⚠  CUELLO"
+        if comp / bucket_total >= 0.5 or (inprog / bucket_total >= 0.3 and venc == 0):
+            return "✅ FLUYE"
+        return "🔵 PENDIENTE"
+
+    # Tabla de buckets
+    print("  Por Bucket:")
+    print("  " + "─" * kpi_width)
+    print(f"  {'Bucket':<20} {'Total':>6} {'✅Comp':>7} {'🔄InProg':>9} {'⏸NoInic':>9} {'⚠Venc':>7} {'Señal':<15}")
+    print("  " + "─" * kpi_width)
+
+    bucket_signals = {}
+    for bucket_id, bucket_name in buckets_dict.items():
+        bucket_tasks = [t for t in tasks if t.get("bucketId") == bucket_id]
+        if not bucket_tasks:
+            bucket_tasks = []  # Bucket vacío
+
+        bt = len(bucket_tasks)
+        b_comp = sum(1 for t in bucket_tasks if t.get("percentComplete", 0) == 100)
+        b_inprog = sum(1 for t in bucket_tasks if 0 < t.get("percentComplete", 0) < 100)
+        b_noinit = sum(1 for t in bucket_tasks if t.get("percentComplete", 0) == 0)
+        b_venc = sum(
+            1 for t in bucket_tasks
+            if _parse_due(t) and _parse_due(t) < today and t.get("percentComplete", 0) < 100
+        )
+
+        signal = _bucket_signal(bucket_name, bucket_tasks)
+        bucket_signals[bucket_name] = signal
+
+        print(f"  {bucket_name:<20} {bt:>6} {b_comp:>7} {b_inprog:>9} {b_noinit:>9} {b_venc:>7} {signal:<15}")
+
+    print("  " + "─" * kpi_width)
+    print()
+
+    # Cobertura de gestión por bucket si --comments
+    if show_comments:
+        print("  Cobertura de gestión por bucket:")
+        print("  " + "─" * kpi_width)
+        for bucket_id, bucket_name in buckets_dict.items():
+            bucket_tasks = [t for t in tasks if t.get("bucketId") == bucket_id]
+            if bucket_tasks:
+                commented = sum(1 for t in bucket_tasks if t.get("LastCommentText", "").strip())
+                pct = (commented / len(bucket_tasks) * 100) if bucket_tasks else 0
+                print(f"  {bucket_name:<20}: {commented}/{len(bucket_tasks)} ({pct:.0f}%) comentadas")
+        print("  " + "─" * kpi_width)
+        print()
+
+        # Urgentes sin comentario
+        print("  Sin comentario con vencimiento próximo (<7 días):")
+        cutoff_urgente = today + timedelta(days=7)
+        urgentes_sin_comentario = [
+            t for t in tasks
+            if not t.get("LastCommentText", "").strip()
+            and _parse_due(t)
+            and today <= _parse_due(t) <= cutoff_urgente
+        ]
+        if urgentes_sin_comentario:
+            for t in urgentes_sin_comentario:
+                due_str = _parse_due(t).strftime("%Y-%m-%d") if _parse_due(t) else "—"
+                print(f"    · {t.get('title', ''):<30} [Vence: {due_str}]")
+        else:
+            print("    (Ninguna)")
+        print()
+        print("  " + "─" * kpi_width)
+        print()
+
+    # Indicador final
+    cuellos = [name for name, signal in bucket_signals.items() if "CUELLO" in signal]
+    gateways_bloq = [name for name, signal in bucket_signals.items() if "GATEWAY" in signal]
+
+    if not vencidas and not cuellos and not gateways_bloq:
+        verdict = "El plan avanza sin fricción notable."
+    elif vencidas and not cuellos and not gateways_bloq:
+        verdict = f"{vencidas} tarea(s) vencida(s) — revisar fechas."
+    elif gateways_bloq:
+        verdict = "Bucket Gateway bloqueado — dependencias externas pendientes."
+        if cuellos:
+            verdict += f"\nDetectado cuello en: {', '.join(cuellos)}."
+    elif cuellos:
+        verdict = f"Detectado cuello en: {', '.join(cuellos)}."
+    else:
+        verdict = ""
+
+    if verdict:
+        print("  " + "─" * kpi_width)
+        print(f"  {verdict}")
+        print("  " + "─" * kpi_width)
+        print()
+
+
+def build_report_html(
+    plan_title: str,
+    buckets_dict: dict[str, str],
+    tasks: list[dict[str, Any]],
+    report_date: str,
+) -> str:
+    """Genera HTML con tabla de tareas y bloque de KPIs. Estilos inline (compatibilidad Outlook).
+
+    Args:
+        plan_title: Nombre del plan.
+        buckets_dict: {bucketId: bucketName}.
+        tasks: Lista de tareas enriquecidas (con assignments, percentComplete, dueDateTime, etc).
+        report_date: Fecha del reporte en formato DD-MM-YYYY.
+
+    Returns:
+        HTML como string.
+    """
+    today = date.today()
+
+    # Calcular KPIs
+    total = len(tasks)
+    completadas = sum(1 for t in tasks if t.get("percentComplete", 0) == 100)
+    en_progreso = sum(1 for t in tasks if 0 < t.get("percentComplete", 0) < 100)
+    sin_iniciar = sum(1 for t in tasks if t.get("percentComplete", 0) == 0)
+    vencidas = sum(
+        1 for t in tasks
+        if _parse_due(t) and _parse_due(t) < today and t.get("percentComplete", 0) < 100
+    )
+
+    # Calcular señal por bucket
+    bucket_signals: dict[str, dict[str, int]] = {}
+    for task in tasks:
+        bucket_id = task.get("bucketId", "")
+        if bucket_id not in bucket_signals:
+            bucket_signals[bucket_id] = {
+                "total": 0,
+                "completadas": 0,
+                "en_progreso": 0,
+                "sin_iniciar": 0,
+                "vencidas": 0,
+            }
+        bucket_signals[bucket_id]["total"] += 1
+        pct = task.get("percentComplete", 0)
+        if pct == 100:
+            bucket_signals[bucket_id]["completadas"] += 1
+        elif pct > 0:
+            bucket_signals[bucket_id]["en_progreso"] += 1
+        else:
+            bucket_signals[bucket_id]["sin_iniciar"] += 1
+        if _parse_due(task) and _parse_due(task) < today and pct < 100:
+            bucket_signals[bucket_id]["vencidas"] += 1
+
+    # Determinar señales por bucket
+    def _get_bucket_signal(bucket_id: str) -> tuple[str, str]:
+        """Retorna (emoji, color_bg) para un bucket."""
+        if bucket_id not in bucket_signals:
+            return ("🔵", "#d1ecf1")  # PENDIENTE
+        sig = bucket_signals[bucket_id]
+        if sig["vencidas"] > 0:
+            return ("⛔", "#ffd6d6")  # GATEWAY (rojo)
+        elif sig["sin_iniciar"] > sig["completadas"]:
+            return ("⚠ ", "#fff3cd")  # CUELLO (amarillo)
+        elif sig["completadas"] == sig["total"]:
+            return ("✅", "#d4edda")  # FLUYE (verde)
+        else:
+            return ("🔵", "#d1ecf1")  # PENDIENTE (azul)
+
+    # Función para determinar color de fila de tarea
+    def _get_task_row_color(task: dict[str, Any]) -> str:
+        pct = task.get("percentComplete", 0)
+        if pct == 100:
+            return "#d4edda"  # verde
+        due = _parse_due(task)
+        if due and due < today and pct < 100:
+            return "#fff3cd"  # naranja/amarillo
+        return "#f8f9fa"  # gris claro
+
+    # Construir HTML
+    html_parts: list[str] = []
+
+    # Cabecera
+    html_parts.append(f"""<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {{ font-family: Segoe UI, Arial, sans-serif; font-size: 12px; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+    th, td {{ border: 1px solid #ccc; padding: 8px; text-align: left; }}
+    th {{ background-color: #0078d4; color: white; font-weight: bold; }}
+    .header-section {{ background-color: #0078d4; color: white; padding: 15px; margin-bottom: 10px; border-radius: 5px; }}
+    .kpi-section {{ margin-top: 20px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }}
+    .kpi-table {{ width: 100%; }}
+    .footer {{ margin-top: 20px; font-size: 11px; color: #666; font-style: italic; }}
+  </style>
+</head>
+<body>
+  <div class="header-section">
+    <h2 style="margin: 0;">{plan_title}</h2>
+    <p style="margin: 5px 0;">Reporte de gestión — {report_date}</p>
+  </div>
+
+  <h3>Tareas por Bucket</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Bucket</th>
+        <th>Título</th>
+        <th>Asignado</th>
+        <th>Estado</th>
+        <th>%</th>
+        <th>Vence</th>
+      </tr>
+    </thead>
+    <tbody>""")
+
+    for task in tasks:
+        bucket_id = task.get("bucketId", "")
+        bucket_name = buckets_dict.get(bucket_id, "?")
+        title = task.get("title", "")[:50]
+
+        # Extraer asignados
+        assignments = task.get("assignments", {})
+        assignee = ", ".join([str(k)[:12] for k in assignments.keys()])[:30] if assignments else "(sin asignar)"
+
+        percent = task.get("percentComplete", 0)
+        status = _derive_task_status(percent)
+        due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
+
+        row_color = _get_task_row_color(task)
+
+        html_parts.append(f"""      <tr style="background-color: {row_color};">
+        <td>{bucket_name}</td>
+        <td>{title}</td>
+        <td>{assignee}</td>
+        <td>{status}</td>
+        <td style="text-align: center;">{percent}</td>
+        <td>{due}</td>
+      </tr>""")
+
+    html_parts.append("""    </tbody>
+  </table>
+
+  <div class="kpi-section">
+    <h3>KPIs — Resumen del Plan</h3>
+    <table class="kpi-table">
+      <tr>
+        <td style="text-align: center;"><strong>Total</strong></td>
+        <td style="text-align: center;"><strong>Completadas</strong></td>
+        <td style="text-align: center;"><strong>En Progreso</strong></td>
+        <td style="text-align: center;"><strong>Sin Iniciar</strong></td>
+        <td style="text-align: center;"><strong>Vencidas</strong></td>
+      </tr>
+      <tr>
+        <td style="text-align: center;">{}</td>
+        <td style="text-align: center;">{}</td>
+        <td style="text-align: center;">{}</td>
+        <td style="text-align: center;">{}</td>
+        <td style="text-align: center;">{}</td>
+      </tr>
+    </table>
+
+    <h4>Señal por Bucket</h4>
+    <table class="kpi-table">
+      <tr>
+        <th>Bucket</th>
+        <th>Señal</th>
+        <th>Total</th>
+        <th>Completadas</th>
+        <th>En Progreso</th>
+        <th>Sin Iniciar</th>
+      </tr>""".format(total, completadas, en_progreso, sin_iniciar, vencidas))
+
+    for bucket_id, bucket_name in buckets_dict.items():
+        emoji, color = _get_bucket_signal(bucket_id)
+        sig = bucket_signals.get(bucket_id, {"total": 0, "completadas": 0, "en_progreso": 0, "sin_iniciar": 0})
+        html_parts.append(f"""      <tr>
+        <td>{bucket_name}</td>
+        <td style="background-color: {color}; text-align: center;">{emoji}</td>
+        <td style="text-align: center;">{sig['total']}</td>
+        <td style="text-align: center;">{sig['completadas']}</td>
+        <td style="text-align: center;">{sig['en_progreso']}</td>
+        <td style="text-align: center;">{sig['sin_iniciar']}</td>
+      </tr>""")
+
+    html_parts.append("""    </table>
+  </div>
+
+  <div class="footer">
+    <p>Generado automáticamente por planner_import.py — Modo: email-report</p>
+  </div>
+</body>
+</html>""")
+
+    return "\n".join(html_parts)
 
 
 def parse_csv(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -525,6 +905,45 @@ async def delete_plan(
     )
 
 
+async def send_mail_report(
+    client: httpx.AsyncClient,
+    token: str,
+    to_emails: list[str],
+    subject: str,
+    html_body: str,
+) -> None:
+    """Envía correo HTML via POST /me/sendMail.
+    Permiso requerido: Mail.Send
+
+    Args:
+        client: httpx.AsyncClient.
+        token: Access token.
+        to_emails: Lista de emails de destinatarios.
+        subject: Asunto del correo.
+        html_body: Cuerpo HTML del correo.
+
+    Raises:
+        ValueError: Si to_emails está vacío.
+        httpx.HTTPStatusError: Si Graph API retorna error.
+    """
+    if not to_emails:
+        raise ValueError("to_emails no puede estar vacío")
+
+    payload: dict[str, Any] = {
+        "message": {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": html_body},
+            "toRecipients": [
+                {"emailAddress": {"address": email}} for email in to_emails
+            ],
+        },
+        "saveToSentItems": True,
+    }
+
+    # POST /me/sendMail retorna 202 Accepted (sin body)
+    await graph_request(client, "POST", "/me/sendMail", token, json=payload)
+
+
 async def get_site_id(
     client: httpx.AsyncClient,
     token: str,
@@ -611,6 +1030,24 @@ async def resolve_email_to_guid(
         print(f"      [WARN] No se pudo resolver '{email}': {exc}")
         cache[email] = None
         return None
+
+
+async def resolve_guid_to_email(
+    client: httpx.AsyncClient, token: str, guid: str
+) -> str | None:
+    """Resuelve GUID de usuario Azure AD a email. Usa cache global.
+    Retorna None si falla.
+    Permiso requerido: User.Read.All
+    """
+    if guid in _GUID_TO_EMAIL_CACHE:
+        return _GUID_TO_EMAIL_CACHE[guid]
+    try:
+        data = await graph_request(client, "GET", f"/users/{guid}?$select=mail,userPrincipalName", token)
+        email = data.get("mail") or data.get("userPrincipalName")
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        email = None
+    _GUID_TO_EMAIL_CACHE[guid] = email
+    return email
 
 
 async def create_task_full(
@@ -1167,10 +1604,16 @@ async def run_report(
                             # Si falla obtener detalles, continuar sin comentario
                             pass
 
-                    enriched_tasks.append({**task, "LastCommentText": comment["text"], "LastCommentDate": comment["date"]})
+                    enriched_tasks.append({
+                        **task,
+                        "LastCommentText": comment["text"],
+                        "LastCommentDate": comment["date"],
+                        "priority": task.get("priority", 5),
+                    })
 
                 # Imprimir tabla para este plan
                 _print_report_table(plan_title, buckets_dict, enriched_tasks, show_comments=fetch_comments)
+                _print_kpi_block(plan_title, buckets_dict, enriched_tasks, show_comments=fetch_comments)
 
                 # Preparar filas para exportación
                 for task in enriched_tasks:
@@ -1234,6 +1677,130 @@ async def run_report(
             print(f"\nReporte de {len(all_rows)} tareas completado.")
 
 
+async def run_email_report(
+    group_id: str,
+    filter_text: str = "",
+    preview: bool = False,
+    to_override: str = "",
+) -> None:
+    """Envía reporte HTML por correo a los asignados de cada plan.
+    Completamente separado de run_report() — sin modificar el flujo terminal.
+
+    Args:
+        group_id: ID del grupo M365 cuyos planes se listan.
+        filter_text: Filtra planes cuyo título lo contenga (case-insensitive). Vacío = sin filtro.
+        preview: Si True, guarda HTML en reports/ y abre en navegador. No envía correo.
+        to_override: Si no vacío, envía sólo a este email (bypass de asignados).
+    """
+    settings = Settings()
+    auth = MicrosoftAuthManager(
+        tenant_id=settings.azure_tenant_id,
+        client_id=settings.azure_client_id,
+        client_secret=settings.azure_client_secret,
+    )
+    token = auth.get_token()
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # 1. Listar planes
+        plans = await list_plans(client, token, group_id)
+        if filter_text:
+            plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
+
+        if not plans:
+            print("No se encontraron planes.")
+            return
+
+        _print_plans_table(plans)
+
+        # 2. Selección interactiva
+        raw = input(
+            "  Introduce los números a seleccionar (separados por coma) o 'todos': "
+        ).strip()
+        if raw.lower() == "todos":
+            selected = plans
+        else:
+            indices = [int(x.strip()) - 1 for x in raw.split(",") if x.strip().isdigit()]
+            selected = [plans[i] for i in indices if 0 <= i < len(plans)]
+
+        if not selected:
+            print("  Sin selección. Saliendo.")
+            return
+
+        # 3. Procesar cada plan
+        for plan in selected:
+            plan_id = plan["id"]
+            plan_title = plan["title"]
+
+            try:
+                # Obtener buckets y tasks
+                buckets = await list_buckets(client, token, plan_id)
+                buckets_dict = {b["id"]: b["name"] for b in buckets}
+
+                tasks = await list_tasks(client, token, plan_id)
+
+                if not tasks:
+                    print(f"  ⚠  {plan_title}: sin tareas.")
+                    await asyncio.sleep(0.3)
+                    continue
+
+                # Enriquecer tareas (igual que en run_report)
+                enriched_tasks = []
+                for task in tasks:
+                    enriched_tasks.append({
+                        **task,
+                        "priority": task.get("priority", 5),
+                    })
+
+                # Generar HTML (para preview o envío)
+                report_date = date.today().strftime("%d-%m-%Y")
+                html = build_report_html(plan_title, buckets_dict, enriched_tasks, report_date)
+                subject = f"[Planner] Reporte de gestión — {plan_title} ({report_date})"
+
+                # Preview mode: guardar HTML y abrir en navegador (sin enviar correo)
+                if preview:
+                    slug = re.sub(r"[^\w\-]", "_", plan_title.lower())[:40]
+                    out_path = Path("reports") / f"preview_{slug}.html"
+                    out_path.parent.mkdir(exist_ok=True)
+                    out_path.write_text(html, encoding="utf-8")
+                    print(f"  [preview] HTML guardado: {out_path}")
+                    webbrowser.open(out_path.resolve().as_uri())
+                    await asyncio.sleep(0.3)
+                    continue
+
+                # Resolver destinatarios (bypass si to_override activo)
+                if to_override:
+                    to_emails = [to_override]
+                else:
+                    # Resolver GUIDs → emails (con cache global)
+                    assignee_guids: set[str] = set()
+                    for task in enriched_tasks:
+                        assignments = task.get("assignments", {})
+                        assignee_guids.update(assignments.keys())
+
+                    to_emails: list[str] = []
+                    for guid in assignee_guids:
+                        email = await resolve_guid_to_email(client, token, guid)
+                        if email:
+                            to_emails.append(email)
+
+                    if not to_emails:
+                        print(f"  ⚠  {plan_title}: sin asignados con email. Correo no enviado.")
+                        await asyncio.sleep(0.3)
+                        continue
+
+                # Enviar correo (modo normal o to_override)
+                await send_mail_report(client, token, to_emails, subject, html)
+                print(f"  ✉  {plan_title}: correo enviado a {len(to_emails)} destinatario(s).")
+
+                await asyncio.sleep(0.3)
+            except httpx.HTTPStatusError as exc:
+                print(f"  ✗ Error Graph al procesar '{plan_title}': {exc.response.status_code}")
+            except httpx.RequestError as exc:
+                print(f"  ✗ Error de red al procesar '{plan_title}': {exc}")
+            except ValueError as exc:
+                print(f"  ✗ Error de validación en '{plan_title}': {exc}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1244,9 +1811,9 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Simula sin llamar a la API")
     parser.add_argument(
         "--mode",
-        choices=["full", "plan", "buckets", "tasks", "list", "delete", "sp-list", "report"],
+        choices=["full", "plan", "buckets", "tasks", "list", "delete", "sp-list", "report", "email-report"],
         default="full",
-        help="Modo: full (default), plan, buckets, tasks, list, delete, sp-list o report",
+        help="Modo: full (default), plan, buckets, tasks, list, delete, sp-list, report o email-report",
     )
     parser.add_argument(
         "--filter", dest="filter_text", default="", help="Filtrar por título/nombre (modos list/delete/sp-list/report)"
@@ -1269,10 +1836,31 @@ def main() -> None:
         "--comments", action="store_true", dest="fetch_comments",
         help="En modo report: obtiene el último comentario por tarea. 1 llamada Graph extra por tarea.",
     )
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="email-report: guarda HTML en reports/ y abre en navegador. No envía correo.",
+    )
+    parser.add_argument(
+        "--to",
+        dest="to_override",
+        default="",
+        metavar="EMAIL",
+        help="email-report: enviar sólo a este email (bypass de asignados).",
+    )
     args = parser.parse_args()
 
     if args.mode == "report":
         asyncio.run(run_report(args.group_id, args.filter_text or "", args.export, args.fetch_comments))
+        return
+
+    if args.mode == "email-report":
+        asyncio.run(run_email_report(
+            args.group_id,
+            args.filter_text or "",
+            preview=args.preview,
+            to_override=args.to_override,
+        ))
         return
 
     if args.mode == "list":
