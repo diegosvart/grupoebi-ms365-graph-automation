@@ -1,0 +1,113 @@
+# Git Workflow Enforcement — Reglas de cumplimiento obligatorio
+
+## Problema identificado
+
+Commits directamente en `develop` sin crear rama feature.
+**Causa raíz:** Falta de mecanismo automático para validar el flujo de ramas.
+**Impacto:** Violación del flujo `feature/* → develop → main`, generando conflictos y difícil trazabilidad.
+
+## Solución implementada
+
+### 1. Pre-commit Hook (Automatizado)
+
+**Ubicación:** `.git/hooks/pre-commit`
+**Función:** Prevenir commits directos en `develop` o `main`
+**Ejecución:** ANTES de cada `git commit`
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$BRANCH" == "main" || "$BRANCH" == "develop" ]]; then
+    echo "❌ ERROR: No puedes commitear directamente en '$BRANCH'"
+    # ...instrucciones...
+    exit 1
+fi
+```
+
+**Resultado:** Imposible commitear en develop/main. Debe usarse rama feature.
+
+### 2. Git Workflow Checklist (Manual, pero obligatorio)
+
+**Ubicación:** `.claude/workflows/git-workflow.md`
+**Función:** Guía paso a paso ANTES de cualquier operación git
+**Secciones:**
+- Antes de `git commit`
+- Antes de `git push`
+- Antes de crear/mergear PR
+- Flujo completo (visual)
+
+**Cuándo consultarlo:** ANTES de CUALQUIER operación con git.
+
+### 3. Memoria del proyecto actualizada
+
+**Ubicación:** `MEMORY.md`
+**Actualización:**
+- Referencia al workflow checklist
+- Documentación del error cometido (commit en develop)
+- Explicación de la solución
+
+## Reglas no negociables
+
+1. **PRE-COMMIT HOOK ACTIVO**
+   - No hay excepción para saltarse el pre-commit hook
+   - Si necesitas testear el hook: `git commit --no-verify` (solo para debug, nunca en producción)
+
+2. **CHECKLIST OBLIGATORIO**
+   - Consultar `.claude/workflows/git-workflow.md` ANTES de:
+     - `git commit`
+     - `git push`
+     - Abrir PR
+     - Mergear PR
+
+3. **FLUJO DE RAMAS ESTRICTO**
+   - Feature development → rama `feature/*`
+   - Bug fixes → rama `bugfix/*`
+   - Hotfixes → rama `hotfix/*`
+   - Merges SIEMPRE vía PR (nunca merge directos en develop/main)
+
+4. **TESTS OBLIGATORIOS**
+   - `pytest tests/ -v` ANTES de hacer commit
+   - Todos los tests deben pasar
+   - Excepción: work-in-progress sin que afecte a tests existentes
+
+## Integración con Claude Code
+
+### Recomendación: Consultar workflow antes de cualquier git operation
+
+Cuando vayas a:
+- ✓ `git commit` → consulta checklist "Antes de git commit"
+- ✓ `git push` → consulta checklist "Antes de git push"
+- ✓ Crear PR → consulta checklist "Antes de crear PR"
+
+### Alternativa futura: Agente especializado
+
+Se podría implementar un agente `git-enforcer` que:
+1. Verifique rama actual
+2. Verifique tests
+3. Valide mensaje de commit
+4. Autorice o bloquee la operación
+
+Por ahora, es responsabilidad del agente consultar el checklist.
+
+## Verificación de setup
+
+```bash
+# 1. Confirmar pre-commit hook existe y es ejecutable
+ls -la .git/hooks/pre-commit
+# Output: -rwxr-xr-x ... pre-commit
+
+# 2. Confirmar que el hook funciona
+git checkout develop
+git commit --allow-empty -m "test"
+# Output: ❌ ERROR: No puedes commitear directamente en 'develop'
+
+# 3. Confirmar workflow checklist existe
+ls -la .claude/workflows/git-workflow.md
+# Output: -rw-r--r-- ... git-workflow.md
+```
+
+## Historia de cambios
+
+- **2026-03-17** — Implementado: pre-commit hook + workflow checklist
+  - **Razón:** Prevenir commits directos en develop
+  - **Autor:** Claude Haiku 4.5
+  - **Status:** Activo

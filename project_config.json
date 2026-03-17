@@ -1,0 +1,28 @@
+{
+  "PRJ-2026-001": {
+    "group_id": "198b4a0a-39c7-4521-a546-6a008e3a254a",
+    "status": "pending_activation",
+    "channel_id": "19:86e75b6be45047b197114de720e2ffc7@thread.tacv2",
+    "channel_url": "https://teams.cloud.microsoft/l/channel/19%3A86e75b6be45047b197114de720e2ffc7%40thread.tacv2/PRJ-2026-001-Cash-Flow?groupId=198b4a0a-39c7-4521-a546-6a008e3a254a&tenantId=b16beb2c-1c93-4497-bc75-5a1cdae6ee6c&allowXTenantAccess=False",
+    "plan_id": "yuEqWu5SpEGNGfpDj6ChLmUAC9Cc",
+    "plan_url": "https://tasks.office.com/b16beb2c-1c93-4497-bc75-5a1cdae6ee6c/Home/PlanViews/yuEqWu5SpEGNGfpDj6ChLmUAC9Cc",
+    "bucket_ids": {
+      "INICIO": "p7EhbG_OSUqnSbJ9K5OpDmUAAjc6",
+      "PLANIFICACIÓN": "yNusX0DTC02nsDo61x0I82UAFkuG",
+      "EJECUCIÓN": "Z3-79lzOhUe1FlUuT2DRJGUAGiTx",
+      "CONTROL": "VpgQ9Wxrt0KK_F2Z6FPjimUAIXgo",
+      "CIERRE": "Fd5vWYLAckidh78slCgK0WUAN70p"
+    },
+    "task_count": 21,
+    "tab_id": "39ad125d-190e-4d68-a17f-7a7140ec1c63",
+    "folder_id": "01VA2W2HRIBT6UTSNPF5DYUWRNCUFV5WRO",
+    "folder_url": "https://cosemar.sharepoint.com/sites/Gestioncontrolproyectos/Documentos%20compartidos/PRJ-2026-001_PRJ-2026-001-Cash-Flow",
+    "subfolder_ids": {
+      "01_INICIO": "01VA2W2HUDEC25J6NBSFAZCWTCQB2ITFDO",
+      "02_PLANIFICACION": "01VA2W2HX6WZABQK2BDRH34LP2LQ6OMEUF",
+      "03_EJECUCION": "01VA2W2HRJWSW7GD5ZTNAJLCMDG75WBDXE",
+      "04_CONTROL": "01VA2W2HS352LDIOJPJBGYQKHGTFWECYZ2",
+      "05_CIERRE": "01VA2W2HSPJZDBP2JSJVBJERVB7PQYJRQL"
+    }
+  }
+}

@@ -1,7 +1,9 @@
 """Tests de graph_request, list_plans, delete_plan, create_plan, create_bucket,
-resolve_email_to_guid y create_task_full — sin red real."""
+resolve_email_to_guid, create_task_full, get_task_details, _print_report_table,
+run_report — sin red real."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -10,13 +12,25 @@ import pytest
 import planner_import
 from planner_import import (
     GRAPH_BASE,
+    _derive_task_status,
+    _parse_due,
+    _print_kpi_block,
+    _print_report_table,
+    build_report_html,
     create_bucket,
     create_plan,
     create_task_full,
     delete_plan,
+    get_last_comment,
+    get_task_details,
     graph_request,
+    list_buckets,
     list_plans,
+    list_tasks,
     resolve_email_to_guid,
+    resolve_guid_to_email,
+    run_report,
+    send_mail_report,
 )
 
 
@@ -369,3 +383,1806 @@ class TestCreateTaskFull:
             client, fake_token, "plan-x", "bucket-y", self._base_task(), None
         )
         assert task_id == "returned-task-id"
+
+
+# ── list_buckets ──────────────────────────────────────────────────────────────
+
+class TestListBuckets:
+    async def test_no_next_link_returns_all(self, fake_token):
+        sample_buckets = [
+            {"id": "bucket-1", "name": "Diseño"},
+            {"id": "bucket-2", "name": "Backend"},
+        ]
+        client = await _make_client([_make_response(200, {"value": sample_buckets})])
+        result = await list_buckets(client, fake_token, "plan-123")
+        assert result == sample_buckets
+
+    async def test_with_next_link_paginates(self, fake_token):
+        page1 = {
+            "value": [{"id": "bucket-1", "name": "Diseño"}],
+            "@odata.nextLink": f"{GRAPH_BASE}/planner/plans/plan-123/buckets?$skip=1",
+        }
+        page2 = {"value": [{"id": "bucket-2", "name": "Backend"}]}
+        client = await _make_client([
+            _make_response(200, page1),
+            _make_response(200, page2),
+        ])
+        result = await list_buckets(client, fake_token, "plan-123")
+        assert len(result) == 2
+        assert client.request.call_count == 2
+
+    async def test_endpoint_contains_plan_id(self, fake_token):
+        plan_id = "my-plan-xyz"
+        client = await _make_client([_make_response(200, {"value": []})])
+        await list_buckets(client, fake_token, plan_id)
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert plan_id in url
+        assert "planner/plans" in url
+        assert "buckets" in url
+
+    async def test_empty_returns_empty_list(self, fake_token):
+        client = await _make_client([_make_response(200, {"value": []})])
+        result = await list_buckets(client, fake_token, "plan-123")
+        assert result == []
+
+
+# ── list_tasks ────────────────────────────────────────────────────────────────
+
+class TestListTasks:
+    async def test_no_next_link_returns_all(self, fake_token):
+        sample_tasks = [
+            {
+                "id": "task-1",
+                "title": "Mockup inicio",
+                "bucketId": "bucket-1",
+                "percentComplete": 50,
+                "assignments": {"user-1": {}},
+                "dueDateTime": "2026-03-30T00:00:00Z",
+                "createdDateTime": "2026-03-01T00:00:00Z",
+            },
+        ]
+        client = await _make_client([_make_response(200, {"value": sample_tasks})])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert result == sample_tasks
+
+    async def test_with_next_link_paginates(self, fake_token):
+        task1 = {
+            "id": "task-1",
+            "title": "Task 1",
+            "bucketId": "b1",
+            "percentComplete": 0,
+            "assignments": {},
+            "dueDateTime": None,
+            "createdDateTime": "2026-03-01T00:00:00Z",
+        }
+        task2 = {
+            "id": "task-2",
+            "title": "Task 2",
+            "bucketId": "b1",
+            "percentComplete": 100,
+            "assignments": {"user-2": {}},
+            "dueDateTime": "2026-04-01T00:00:00Z",
+            "createdDateTime": "2026-03-02T00:00:00Z",
+        }
+        page1 = {
+            "value": [task1],
+            "@odata.nextLink": f"{GRAPH_BASE}/planner/plans/plan-123/tasks?$select=...&$skip=1",
+        }
+        page2 = {"value": [task2]}
+        client = await _make_client([
+            _make_response(200, page1),
+            _make_response(200, page2),
+        ])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert len(result) == 2
+        assert client.request.call_count == 2
+
+    async def test_endpoint_contains_plan_id(self, fake_token):
+        plan_id = "my-plan-xyz"
+        client = await _make_client([_make_response(200, {"value": []})])
+        await list_tasks(client, fake_token, plan_id)
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert plan_id in url
+        assert "planner/plans" in url
+        assert "tasks" in url
+
+    async def test_endpoint_url_no_select_parameter(self, fake_token):
+        """URL no incluye $select — Microsoft Graph devuelve campos por defecto."""
+        client = await _make_client([_make_response(200, {"value": []})])
+        await list_tasks(client, fake_token, "plan-123")
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert "$select" not in url
+        # Verificar estructura básica de la URL
+        assert "planner/plans/plan-123/tasks" in url
+
+    async def test_returns_default_fields(self, fake_token):
+        """Respuesta contiene campos devueltos por defecto: id, title, lastModifiedDateTime."""
+        response_data = {
+            "value": [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "percentComplete": 50,
+                    "lastModifiedDateTime": "2026-03-15T00:00:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert len(result) == 1
+        assert result[0]["id"] == "t1"
+        assert result[0]["lastModifiedDateTime"] == "2026-03-15T00:00:00Z"
+
+    async def test_conversation_thread_not_in_response(self, fake_token):
+        """conversationThreadId NO está disponible en este endpoint."""
+        response_data = {"value": [{"id": "t1", "title": "Task"}]}
+        client = await _make_client([_make_response(200, response_data)])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert "conversationThreadId" not in result[0]
+
+
+# ── _derive_task_status ────────────────────────────────────────────────────────
+
+class TestDeriveTaskStatus:
+    def test_zero_is_not_started(self):
+        assert _derive_task_status(0) == "notStarted"
+
+    def test_hundred_is_completed(self):
+        assert _derive_task_status(100) == "completed"
+
+    def test_fifty_is_in_progress(self):
+        assert _derive_task_status(50) == "inProgress"
+
+    def test_one_is_in_progress(self):
+        assert _derive_task_status(1) == "inProgress"
+
+    def test_ninety_nine_is_in_progress(self):
+        assert _derive_task_status(99) == "inProgress"
+
+
+# ── get_task_details ──────────────────────────────────────────────────────────
+
+class TestGetTaskDetails:
+    async def test_returns_task_details_dict(self, fake_token):
+        """GET exitoso devuelve dict con description y checklist."""
+        response_data = {
+            "description": "Una descripción detallada",
+            "@odata.etag": 'W/"etag-details"',
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_task_details(client, fake_token, "task-123")
+        assert result == response_data
+        assert "description" in result
+
+    async def test_endpoint_contains_task_id(self, fake_token):
+        """URL contiene el task_id correcto."""
+        task_id = "task-abc-xyz-123"
+        client = await _make_client([_make_response(200, {})])
+        await get_task_details(client, fake_token, task_id)
+        args, _ = client.request.call_args
+        url: str = args[1]
+        assert task_id in url
+        assert "planner/tasks" in url
+        assert "details" in url
+
+    async def test_single_call_no_pagination(self, fake_token):
+        """Solo se hace 1 llamada (objeto único, sin @odata.nextLink)."""
+        client = await _make_client([_make_response(200, {"id": "task-1"})])
+        await get_task_details(client, fake_token, "task-123")
+        assert client.request.call_count == 1
+
+    async def test_propagates_http_status_error(self, fake_token):
+        """Error 404 se propaga (raise_for_status lanza HTTPStatusError)."""
+        client = await _make_client([_make_response(404)])
+        with pytest.raises(httpx.HTTPStatusError):
+            await get_task_details(client, fake_token, "nonexistent-task")
+
+
+# ── _print_report_table ────────────────────────────────────────────────────────
+
+class TestPrintReportTable:
+    def test_task_without_due_date_shows_dash(self, capsys):
+        """dueDateTime ausente → imprime '-'."""
+        tasks = [
+            {
+                "title": "Sin fecha",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "-" in captured.out
+
+    def test_task_without_assignments_shows_sin_asignar(self, capsys):
+        """assignments vacío → imprime '(sin asignar)'."""
+        tasks = [
+            {
+                "title": "Tarea huérfana",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "(sin asignar)" in captured.out
+
+    def test_unknown_bucket_id_shows_question_mark(self, capsys):
+        """bucketId no existe en buckets_dict → imprime '?'."""
+        tasks = [
+            {
+                "title": "Tarea",
+                "bucketId": "unknown-bucket",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "?" in captured.out
+
+    def test_title_truncated_to_34_chars(self, capsys):
+        """Título mayor a 34 chars se trunca."""
+        long_title = "A" * 50
+        tasks = [
+            {
+                "title": long_title,
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        # Debe aparecer truncado a 34
+        assert "A" * 34 in captured.out
+        assert "A" * 50 not in captured.out
+
+    def test_empty_task_list_prints_header_only(self, capsys):
+        """Lista vacía → imprime encabezado sin filas de datos."""
+        planner_import._print_report_table("Plan Test", {}, [])
+        captured = capsys.readouterr()
+        assert "Bucket" in captured.out
+        assert "Título" in captured.out
+        assert "Plan Test" in captured.out
+
+    def test_plan_title_in_output(self, capsys):
+        """plan_title aparece en la salida."""
+        plan_title = "MI PLAN ESPECIAL"
+        planner_import._print_report_table(plan_title, {}, [])
+        captured = capsys.readouterr()
+        assert plan_title in captured.out
+
+
+
+# ── run_report ────────────────────────────────────────────────────────────────
+
+class TestRunReport:
+    async def test_no_plans_exits_early(self, mock_auth, monkeypatch, capsys):
+        """list_plans retorna [] → imprime 'No se encontraron planes.' y retorna."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            mock_list.return_value = []
+            await planner_import.run_report("group-id")
+            captured = capsys.readouterr()
+            assert "No se encontraron planes" in captured.out
+
+    async def test_seleccion_todos_procesa_todos(self, mock_auth, monkeypatch, capsys):
+        """Input 'todos' → llama list_buckets y list_tasks para cada plan."""
+        plans = [
+            {"id": "p1", "title": "Plan 1"},
+            {"id": "p2", "title": "Plan 2"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = []
+                    mock_tasks.return_value = []
+                    monkeypatch.setattr("builtins.input", lambda _: "todos")
+
+                    await planner_import.run_report("group-id")
+
+                    assert mock_buckets.call_count == 2
+                    assert mock_tasks.call_count == 2
+
+    async def test_seleccion_numerica(self, mock_auth, monkeypatch, capsys):
+        """Input '1' → procesa solo el primer plan de la lista."""
+        plans = [
+            {"id": "p1", "title": "Plan 1"},
+            {"id": "p2", "title": "Plan 2"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = []
+                    mock_tasks.return_value = []
+                    monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                    await planner_import.run_report("group-id")
+
+                    assert mock_buckets.call_count == 1
+                    assert mock_tasks.call_count == 1
+
+    async def test_seleccion_vacia_sale(self, mock_auth, monkeypatch, capsys):
+        """Input '' → imprime mensaje de salida y retorna sin procesar planes."""
+        plans = [{"id": "p1", "title": "Plan 1"}]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                mock_list.return_value = plans
+                monkeypatch.setattr("builtins.input", lambda _: "")
+
+                await planner_import.run_report("group-id")
+
+                captured = capsys.readouterr()
+                assert "Sin selección" in captured.out or "Saliendo" in captured.out
+                mock_buckets.assert_not_called()
+
+    async def test_export_csv_creates_file(self, mock_auth, monkeypatch, tmp_path):
+        """--export crea archivo CSV con columnas correctas."""
+        csv_path = tmp_path / "test_report.csv"
+        plans = [
+            {"id": "p1", "title": "Plan 1"},
+        ]
+        buckets = [{"id": "b1", "name": "Backlog"}]
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Task 1",
+                "bucketId": "b1",
+                "assignments": {"user-1": {}},
+                "percentComplete": 50,
+                "dueDateTime": "2026-03-30T00:00:00Z",
+                "createdDateTime": "2026-03-01T00:00:00Z",
+            }
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = buckets
+                    mock_tasks.return_value = tasks
+                    monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                    await planner_import.run_report("group-id", export_csv=csv_path)
+
+                    assert csv_path.exists()
+                    content = csv_path.read_text(encoding="utf-8")
+                    assert "PlanID" in content
+                    assert "TaskTitle" in content
+                    assert ";" in content  # Delimitador
+
+    async def test_export_to_env_raises_value_error(self, mock_auth, monkeypatch):
+        """export_csv con '.env' en ruta lanza ValueError antes de procesar."""
+        env_path = Path("/some/path/.env")
+        with pytest.raises(ValueError, match="seguridad"):
+            await planner_import.run_report("group-id", export_csv=env_path)
+
+    async def test_filter_text_excluye_planes(self, mock_auth, monkeypatch, capsys):
+        """filter_text filtra planes por título — los no coincidentes no aparecen."""
+        plans = [
+            {"id": "p1", "title": "Plan 2026-Q1"},
+            {"id": "p2", "title": "Proyecto Viejo 2025"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = []
+                    mock_tasks.return_value = []
+                    monkeypatch.setattr("builtins.input", lambda _: "todos")
+
+                    await planner_import.run_report("group-id", filter_text="2026")
+
+                    captured = capsys.readouterr()
+                    assert "2026-Q1" in captured.out
+                    assert "Viejo 2025" not in captured.out
+
+
+# ── get_last_comment (B2) ──────────────────────────────────────────────────────
+
+class TestGetLastComment:
+    async def test_returns_text_and_date(self, fake_token):
+        """Respuesta 200 con posts → devuelve dict con text y date."""
+        from planner_import import get_last_comment
+
+        response_data = {
+            "value": [
+                {
+                    "body": {"content": "<div>Último comentario de la tarea</div>"},
+                    "receivedDateTime": "2026-03-15T10:30:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert isinstance(result, dict)
+        assert "text" in result
+        assert "date" in result
+        assert "Último comentario" in result["text"]
+        assert "2026-03-15" in result["date"]
+
+    async def test_strips_html_tags(self, fake_token):
+        """HTML tags se eliminan, solo queda el contenido de texto."""
+        from planner_import import get_last_comment
+
+        response_data = {
+            "value": [
+                {
+                    "body": {
+                        "content": "<div><p>Clean <strong>text</strong> only</p></div>"
+                    },
+                    "receivedDateTime": "2026-03-15T10:30:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert "<" not in result["text"]
+        assert ">" not in result["text"]
+        assert "Clean" in result["text"]
+        assert "text" in result["text"]
+
+    async def test_truncates_to_200(self, fake_token):
+        """Texto mayor a 200 caracteres se trunca."""
+        from planner_import import get_last_comment
+
+        long_text = "A" * 250
+        response_data = {
+            "value": [
+                {
+                    "body": {"content": f"<div>{long_text}</div>"},
+                    "receivedDateTime": "2026-03-15T10:30:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert len(result["text"]) <= 200
+
+    async def test_no_posts_returns_dashes(self, fake_token):
+        """value: [] (sin posts) → devuelve {'-', '-'}."""
+        from planner_import import get_last_comment
+
+        response_data = {"value": []}
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert result == {"text": "-", "date": "-"}
+
+    async def test_404_returns_dashes(self, fake_token):
+        """404 → se absorbe silenciosamente, devuelve {'-', '-'}."""
+        from planner_import import get_last_comment
+
+        client = await _make_client([_make_response(404)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert result == {"text": "-", "date": "-"}
+
+    async def test_non_404_propagates(self, fake_token):
+        """500 u otro error → se propaga (no se absorbe)."""
+        from planner_import import get_last_comment
+
+        client = await _make_client([_make_response(500)])
+        with pytest.raises(httpx.HTTPStatusError):
+            await get_last_comment(client, fake_token, "group-id", "thread-id")
+
+
+# ── _print_report_table con comentarios (B2) ──────────────────────────────────
+
+class TestPrintReportTableComments:
+    def test_show_comments_shows_column(self, capsys):
+        """show_comments=True → columna 'Último comentario' aparece."""
+        tasks = [
+            {
+                "title": "Tarea con comentario",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+                "LastCommentText": "Este es un comentario",
+                "LastCommentDate": "2026-03-14",
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        assert "Último comentario" in captured.out
+        assert "Este es un comentario" in captured.out
+
+    def test_no_comments_hides_column(self, capsys):
+        """show_comments=False (default) → columna 'Último comentario' NO aparece."""
+        tasks = [
+            {
+                "title": "Tarea sin comentario",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks, show_comments=False)
+        captured = capsys.readouterr()
+        assert "Último comentario" not in captured.out
+
+    def test_comment_text_truncated_to_38(self, capsys):
+        """Texto de comentario > 38 chars se trunca en display."""
+        long_comment = "A" * 50
+        tasks = [
+            {
+                "title": "Tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+                "LastCommentText": long_comment,
+                "LastCommentDate": "2026-03-14",
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        # Se trunca en [:38] en la línea de print, así que máximo 38 A's pueden aparecer consecutivos
+        assert "A" * 38 in captured.out
+        assert "A" * 50 not in captured.out
+
+
+# ── run_report con comentarios (B2) ────────────────────────────────────────────
+
+class TestRunReportComments:
+    async def test_comments_flag_calls_get_last_comment(self, mock_auth, monkeypatch):
+        """Con fetch_comments=True, se llama get_last_comment para cada tarea con hilo."""
+        plans = [{"id": "p1", "title": "Plan 1"}]
+        buckets = [{"id": "b1", "name": "Backlog"}]
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Task 1",
+                "bucketId": "b1",
+                "assignments": {},
+                "percentComplete": 0,
+            },
+            {
+                "id": "t2",
+                "title": "Task 2",
+                "bucketId": "b1",
+                "assignments": {},
+                "percentComplete": 0,
+            }
+        ]
+        task_details_responses = [
+            {"conversationThreadId": "thread-123"},
+            {"conversationThreadId": "thread-456"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    with patch.object(planner_import, "get_last_comment", new_callable=AsyncMock) as mock_comment:
+                        with patch.object(planner_import, "graph_request", new_callable=AsyncMock) as mock_graph:
+                            mock_list.return_value = plans
+                            mock_buckets.return_value = buckets
+                            mock_tasks.return_value = tasks
+                            mock_graph.side_effect = task_details_responses
+                            mock_comment.return_value = {"text": "Comment", "date": "2026-03-14"}
+                            monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                            await planner_import.run_report("group-id", fetch_comments=True)
+
+                            assert mock_comment.call_count == 2
+
+    async def test_no_comments_flag_skips_calls(self, mock_auth, monkeypatch):
+        """Sin fetch_comments (default), get_last_comment NO se llama."""
+        plans = [{"id": "p1", "title": "Plan 1"}]
+        buckets = [{"id": "b1", "name": "Backlog"}]
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Task 1",
+                "bucketId": "b1",
+                "assignments": {},
+                "percentComplete": 0,
+            }
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    with patch.object(planner_import, "get_last_comment", new_callable=AsyncMock) as mock_comment:
+                        mock_list.return_value = plans
+                        mock_buckets.return_value = buckets
+                        mock_tasks.return_value = tasks
+                        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                        await planner_import.run_report("group-id", fetch_comments=False)
+
+                        mock_comment.assert_not_called()
+
+
+class TestPrintKpiBlock:
+    """Tests para _print_kpi_block — 14 tests."""
+
+    def _make_kpi_task(
+        self,
+        bucket_id="b1",
+        percent=0,
+        due_days=None,
+        modified_days=None,
+        comment_text="",
+    ) -> dict:
+        """Factory helper para crear tareas de test.
+
+        due_days: None = sin fecha, <0 = vencida, >0 = futura
+        modified_days: None = sin dato, número = días atrás
+        """
+        from datetime import date, timedelta
+
+        today = date.today()
+        due = None
+        if due_days is not None:
+            due = (today + timedelta(days=due_days)).isoformat() + "T00:00:00Z"
+        modified = "-"
+        if modified_days is not None:
+            modified = (today - timedelta(days=modified_days)).isoformat() + "T00:00:00Z"
+        return {
+            "id": "tid",
+            "title": "Test task",
+            "bucketId": bucket_id,
+            "percentComplete": percent,
+            "assignments": {},
+            "dueDateTime": due,
+            "lastModifiedDateTime": modified,
+            "LastCommentText": comment_text,
+            "LastCommentDate": "",
+            "priority": 5,
+        }
+
+    def test_empty_task_list(self, capsys):
+        """Lista vacía no lanza excepción, imprime encabezado con plan_title."""
+        tasks = []
+        buckets_dict = {}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        # Con lista vacía, _print_kpi_block retorna sin imprimir nada
+        assert captured.out == ""
+
+    def test_totals_correct(self, capsys):
+        """1 comp + 1 inProgress + 1 notStarted → totales y % en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "Total: 3" in captured.out
+        assert "Completadas: 1" in captured.out
+        assert "En progreso: 1" in captured.out
+        assert "Sin iniciar: 1" in captured.out
+
+    def test_vencidas_count(self, capsys):
+        """2 tareas con due pasado y <100%, 1 completada pasada → vencidas = 2."""
+        from datetime import date, timedelta
+
+        today = date.today()
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, due_days=-1),  # vencida
+            self._make_kpi_task(bucket_id="b1", percent=50, due_days=-2),  # vencida
+            self._make_kpi_task(bucket_id="b1", percent=100, due_days=-3),  # completada, no cuenta
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "Vencidas (no completadas): 2" in captured.out
+
+    def test_vencidas_zero_no_alert(self, capsys):
+        """0 vencidas → output contiene '0' sin alertas."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, due_days=5),
+            self._make_kpi_task(bucket_id="b1", percent=50, due_days=10),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "Vencidas (no completadas): 0" in captured.out
+
+    def test_signal_cuello_inprogreso_con_vencidas(self, capsys):
+        """4/6 inProgress + 1 vencida → 'CUELLO' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=50, due_days=-1),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "CUELLO" in captured.out
+
+    def test_signal_cuello_sin_completadas(self, capsys):
+        """4/7 inProgress + 0 completadas → 'CUELLO' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "CUELLO" in captured.out
+
+    def test_signal_gateway_vencidas(self, capsys):
+        """bucket 'Gateway' + 1 vencida → 'GATEWAY' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, due_days=-1),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+        ]
+        buckets_dict = {"b1": "Gateway"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "GATEWAY" in captured.out
+
+    def test_signal_fluye(self, capsys):
+        """5/8 completadas → 'FLUYE' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=100),
+            self._make_kpi_task(bucket_id="b1", percent=50),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "FLUYE" in captured.out
+
+    def test_signal_pendiente(self, capsys):
+        """todo notStarted → 'PENDIENTE' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "PENDIENTE" in captured.out
+
+    def test_bucket_vacio_dash(self, capsys):
+        """bucket en buckets_dict sin tareas → '—' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0),
+        ]
+        buckets_dict = {"b1": "Backlog", "b2": "EmptyBucket"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        # EmptyBucket debe tener '—' como señal
+        assert "—" in captured.out
+
+    def test_no_comments_hides_cobertura(self, capsys):
+        """show_comments=False → 'Cobertura de gestión' NO en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, comment_text="test"),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=False)
+        captured = capsys.readouterr()
+        assert "Cobertura de gestión por bucket:" not in captured.out
+
+    def test_con_comments_cobertura_aparece(self, capsys):
+        """show_comments=True + tasks con texto → 'Cobertura de gestión' en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, comment_text="test"),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        assert "Cobertura de gestión por bucket:" in captured.out
+
+    def test_urgentes_sin_comentario(self, capsys):
+        """tarea sin comentario + due en 3 días → aparece en 'vencimiento próximo'."""
+        tasks = [
+            self._make_kpi_task(
+                bucket_id="b1",
+                percent=0,
+                due_days=3,
+                comment_text="",
+            ),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        assert "Sin comentario con vencimiento próximo" in captured.out
+        assert "Test task" in captured.out
+
+    def test_stagnadas_skipped_when_no_data(self, capsys):
+        """todos lastModifiedDateTime = '-' → 'Estancadas' NO en output."""
+        tasks = [
+            self._make_kpi_task(bucket_id="b1", percent=0, modified_days=None),
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        _print_kpi_block("Test Plan", buckets_dict, tasks, show_comments=False)
+        captured = capsys.readouterr()
+        # Sin datos de lastModified, no debe mostrar "Estancadas"
+        assert "Estancadas" not in captured.out or "0 tareas" not in captured.out
+
+
+# ── TestResolveGuidToEmail ────────────────────────────────────────────────────
+
+class TestResolveGuidToEmail:
+    async def test_returns_mail_field(self, fake_token):
+        """Si 'mail' está presente, retorna ese valor."""
+        client = await _make_client(
+            [_make_response(200, {"id": "user-guid", "mail": "user@example.com"})]
+        )
+        result = await resolve_guid_to_email(client, fake_token, "user-guid")
+        assert result == "user@example.com"
+
+    async def test_falls_back_to_upn(self, fake_token):
+        """Si 'mail' es vacío, retorna 'userPrincipalName'."""
+        client = await _make_client(
+            [_make_response(200, {"id": "user-guid", "mail": None, "userPrincipalName": "user@tenant.onmicrosoft.com"})]
+        )
+        result = await resolve_guid_to_email(client, fake_token, "user-guid")
+        assert result == "user@tenant.onmicrosoft.com"
+
+    async def test_http_error_returns_none(self, fake_token):
+        """Si falla (HTTPStatusError), retorna None sin lanzar excepción."""
+        client = await _make_client([_make_response(404)])
+        result = await resolve_guid_to_email(client, fake_token, "nonexistent-guid")
+        assert result is None
+
+
+# ── TestBuildReportHtml ───────────────────────────────────────────────────────
+
+class TestBuildReportHtml:
+    def test_returns_string(self):
+        """Retorna str, no vacío."""
+        html = build_report_html("Test Plan", {}, [], "01-01-2026")
+        assert isinstance(html, str)
+        assert len(html) > 0
+
+    def test_plan_title_in_html(self):
+        """Plan title aparece en el HTML."""
+        html = build_report_html("Mi Plan Especial", {}, [], "01-01-2026")
+        assert "Mi Plan Especial" in html
+
+    def test_task_title_in_html(self):
+        """Título de tarea aparece en el HTML."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Mi Tarea Importante",
+                "bucketId": "b1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": "2026-03-20T00:00:00Z",
+            }
+        ]
+        html = build_report_html("Test", {"b1": "Backlog"}, tasks, "01-01-2026")
+        assert "Mi Tarea Importante" in html
+
+    def test_bucket_name_in_html(self):
+        """Nombre de bucket aparece en el HTML."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Task",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        html = build_report_html("Test", {"b1": "Mi Bucket Especial"}, tasks, "01-01-2026")
+        assert "Mi Bucket Especial" in html
+
+
+# ── TestSendMailReport ────────────────────────────────────────────────────────
+
+class TestSendMailReport:
+    async def test_calls_sendmail_endpoint(self, fake_token):
+        """graph_request llamado con /me/sendMail."""
+        client = await _make_client([_make_response(202)])
+        await send_mail_report(
+            client, fake_token, ["user@example.com"], "Subject", "<p>Body</p>"
+        )
+        args, kwargs = client.request.call_args
+        assert "/me/sendMail" in args[1]
+
+    async def test_payload_has_recipients(self, fake_token):
+        """Payload contiene toRecipients con los emails."""
+        client = await _make_client([_make_response(202)])
+        await send_mail_report(
+            client, fake_token, ["user1@example.com", "user2@example.com"], "Subj", "<p>Body</p>"
+        )
+        _, kwargs = client.request.call_args
+        payload = kwargs["json"]
+        recipients = payload["message"]["toRecipients"]
+        emails = [r["emailAddress"]["address"] for r in recipients]
+        assert "user1@example.com" in emails
+        assert "user2@example.com" in emails
+
+    async def test_subject_in_payload(self, fake_token):
+        """Subject correcto en message.subject."""
+        client = await _make_client([_make_response(202)])
+        await send_mail_report(
+            client, fake_token, ["user@example.com"], "Mi Asunto", "<p>Body</p>"
+        )
+        _, kwargs = client.request.call_args
+        payload = kwargs["json"]
+        assert payload["message"]["subject"] == "Mi Asunto"
+
+    async def test_empty_recipients_raises(self, fake_token):
+        """Lista vacía lanza ValueError, no llama a Graph."""
+        client = await _make_client([])
+        with pytest.raises(ValueError, match="to_emails no puede estar vacío"):
+            await send_mail_report(client, fake_token, [], "Subject", "<p>Body</p>")
+        client.request.assert_not_called()
+
+
+# ── TestRunEmailReport ────────────────────────────────────────────────────────
+
+class TestRunEmailReport:
+    async def test_sends_for_each_plan(self, fake_token):
+        """send_mail_report llamado una vez por plan seleccionado."""
+        # Mock list_plans, list_buckets, list_tasks, resolve_guid_to_email, build_report_html, send_mail_report
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_list_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_list_tasks, \
+             patch.object(planner_import, "resolve_guid_to_email", new_callable=AsyncMock) as mock_resolve, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+            mock_list_plans.return_value = [
+                {"id": "plan1", "title": "Plan 1"},
+                {"id": "plan2", "title": "Plan 2"},
+            ]
+            mock_list_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_list_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "percentComplete": 50,
+                    "assignments": {"guid1": {}},
+                }
+            ]
+            mock_resolve.return_value = "user@example.com"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id")
+            # send_mail_report debe haber sido llamado 1 vez (solo el plan seleccionado)
+            assert mock_send.call_count == 1
+
+    async def test_skips_plan_with_no_assignees(self, fake_token):
+        """Plan sin asignados → imprime aviso, no llama send_mail_report."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_list_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_list_tasks, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+            mock_list_plans.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_list_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_list_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "percentComplete": 50,
+                    "assignments": {},  # sin asignados
+                }
+            ]
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id")
+            # send_mail_report NO debe ser llamado
+            mock_send.assert_not_called()
+
+    async def test_filter_text_applied(self, fake_token):
+        """Planes que no coinciden con filter_text son ignorados."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value=""):
+            mock_list_plans.return_value = [
+                {"id": "plan1", "title": "Project A"},
+                {"id": "plan2", "title": "Project B"},
+            ]
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", filter_text="Project A")
+            # list_plans debe llamarse, pero el filtro se aplica en memoria
+            assert mock_list_plans.call_count == 1
+
+
+class TestRunEmailReportPreview:
+    """Tests para --preview flag en email-report."""
+
+    async def test_preview_saves_html_file(self, fake_token):
+        """Con preview=True, se crea un archivo .html en reports/."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"), \
+             patch("webbrowser.open") as mock_browser, \
+             patch.object(Path, "write_text") as mock_write:
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1", "assignments": {}, "percentComplete": 0}
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", preview=True)
+            # Debe haberse creado el archivo
+            mock_write.assert_called_once()
+            args, kwargs = mock_write.call_args
+            assert args[0] == "<html>test</html>"
+            assert kwargs.get("encoding") == "utf-8"
+
+    async def test_preview_does_not_call_send(self, fake_token):
+        """Con preview=True, send_mail_report NO es llamado."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"), \
+             patch("webbrowser.open"), \
+             patch.object(Path, "write_text"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1", "assignments": {}, "percentComplete": 0}
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", preview=True)
+            # send_mail_report NO debe ser llamado
+            mock_send.assert_not_called()
+
+    async def test_preview_opens_browser(self, fake_token):
+        """Con preview=True, webbrowser.open es llamado una vez por plan."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"), \
+             patch("webbrowser.open") as mock_browser, \
+             patch.object(Path, "write_text"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1", "assignments": {}, "percentComplete": 0}
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", preview=True)
+            # webbrowser.open debe ser llamado una vez
+            mock_browser.assert_called_once()
+            call_args = mock_browser.call_args[0][0]
+            assert "preview_" in call_args
+            assert ".html" in call_args
+
+
+class TestRunEmailReportTo:
+    """Tests para --to <email> flag en email-report."""
+
+    async def test_to_override_sends_to_single_email(self, fake_token):
+        """Con to_override, send_mail_report es llamado con [to_override]."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "resolve_guid_to_email", new_callable=AsyncMock) as mock_resolve, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "assignments": {"guid1": {}},  # tiene asignado
+                    "percentComplete": 0,
+                }
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", to_override="dmorales@grupoebi.cl")
+
+            # send_mail_report debe ser llamado con [to_override]
+            mock_send.assert_called_once()
+            call_args = mock_send.call_args
+            assert call_args[0][2] == ["dmorales@grupoebi.cl"]
+            # resolve_guid_to_email NO debe ser llamado (bypass de resolución)
+            mock_resolve.assert_not_called()
+
+    async def test_to_override_skips_guid_resolution(self, fake_token):
+        """Con to_override, resolve_guid_to_email NO es llamado."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "build_report_html") as mock_build, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock) as mock_send, \
+             patch.object(planner_import, "resolve_guid_to_email", new_callable=AsyncMock) as mock_resolve, \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list_plans.return_value = [{"id": "p1", "title": "Test Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "assignments": {"guid1": {}, "guid2": {}},  # múltiples asignados
+                    "percentComplete": 0,
+                }
+            ]
+            mock_build.return_value = "<html>test</html>"
+
+            from planner_import import run_email_report
+
+            await run_email_report("group-id", to_override="pm@example.com")
+
+            # resolve_guid_to_email NO debe ser llamado
+            mock_resolve.assert_not_called()
+            # send_mail_report debe ser llamado con el email simple
+            mock_send.assert_called_once()
+            call_args = mock_send.call_args
+            assert call_args[0][2] == ["pm@example.com"]
+
+
+# ── Nuevos tests para _format_datetime, CommentCount, Checklist ─────────────────
+
+class TestFormatDatetime:
+    """Tests para la nueva función _format_datetime()."""
+
+    def test_utc_z_format(self):
+        """Convierte ISO 8601 Z a formato local dd-mm-yyyy hh:mm."""
+        from planner_import import _format_datetime
+
+        result = _format_datetime("2026-03-16T23:40:45Z")
+        # Esperamos que contenga la fecha y hora (puede variar por zona horaria)
+        assert "2026" in result or "03-2026" in result  # año presente
+        assert ":" in result  # hora presente
+
+    def test_empty_string_returns_dash(self):
+        """Cadena vacía retorna '-'."""
+        from planner_import import _format_datetime
+
+        assert _format_datetime("") == "-"
+
+    def test_invalid_returns_dash(self):
+        """Formato inválido retorna '-'."""
+        from planner_import import _format_datetime
+
+        assert _format_datetime("no-es-fecha") == "-"
+
+
+class TestCommentCount:
+    """Tests para extracción de commentCount en enriquecimiento de tareas."""
+
+    async def test_comment_count_extracted_from_task(self, fake_token):
+        """commentCount en tarea → campo CommentCount en enriched_task."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "_print_report_table") as mock_table, \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task with comments",
+                    "bucketId": "bucket1",
+                    "commentCount": 3,
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=False)
+
+            # Verificar que _print_report_table fue llamado
+            mock_table.assert_called_once()
+            tasks_arg = mock_table.call_args[0][2]
+            assert len(tasks_arg) == 1
+            assert tasks_arg[0]["CommentCount"] == 3
+
+    async def test_comment_count_defaults_to_zero(self, fake_token):
+        """Sin commentCount en tarea → CommentCount=0."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "_print_report_table") as mock_table, \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task without commentCount",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 0,
+                }
+            ]
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=False)
+
+            tasks_arg = mock_table.call_args[0][2]
+            assert tasks_arg[0]["CommentCount"] == 0
+
+
+class TestChecklistInReport:
+    """Tests para el nuevo parámetro --checklist en run_report."""
+
+    async def test_checklist_calls_get_task_details(self, fake_token):
+        """Con fetch_checklist=True, get_task_details es llamado por tarea."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "_print_report_table"), \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+            mock_details.return_value = {
+                "checklist": {
+                    "item1": {"title": "Do X", "isChecked": True},
+                    "item2": {"title": "Do Y", "isChecked": False},
+                    "item3": {"title": "Do Z", "isChecked": True},
+                }
+            }
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=True)
+
+            # get_task_details debe ser llamado para la tarea
+            mock_details.assert_called()
+
+    async def test_checklist_count_format(self, fake_token):
+        """ChecklistDone=2, ChecklistTotal=5 → '2/5' en salida."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "_print_report_table") as mock_table, \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+            mock_details.return_value = {
+                "checklist": {
+                    "item1": {"isChecked": True},
+                    "item2": {"isChecked": True},
+                    "item3": {"isChecked": False},
+                    "item4": {"isChecked": False},
+                    "item5": {"isChecked": False},
+                }
+            }
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=True)
+
+            tasks_arg = mock_table.call_args[0][2]
+            assert tasks_arg[0]["ChecklistDone"] == 2
+            assert tasks_arg[0]["ChecklistTotal"] == 5
+
+    async def test_checklist_skipped_without_flag(self, fake_token):
+        """Sin --checklist, get_task_details NO es llamado."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "_print_report_table"), \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=False)
+
+            # get_task_details NO debe ser llamado
+            mock_details.assert_not_called()
+
+
+class TestResolveGuidToDisplayName:
+    """Tests para la nueva función resolve_guid_to_display_name()."""
+
+    async def test_returns_display_name(self, fake_token):
+        """Devuelve displayName de la respuesta de Graph."""
+        mock_client = AsyncMock()
+        mock_response = {
+            "id": "guid-123",
+            "displayName": "Diego Morales",
+            "givenName": "Diego",
+            "surname": "Morales",
+        }
+
+        with patch.object(planner_import, "graph_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = mock_response
+
+            result = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "guid-123"
+            )
+
+            assert result == "Diego Morales"
+            mock_req.assert_called_once()
+
+    async def test_returns_none_on_404(self, fake_token):
+        """Retorna None si Graph API retorna 404."""
+        mock_client = AsyncMock()
+
+        with patch.object(
+            planner_import, "graph_request", new_callable=AsyncMock
+        ) as mock_req:
+            mock_req.side_effect = httpx.HTTPStatusError(
+                "404", request=AsyncMock(), response=AsyncMock(status_code=404)
+            )
+
+            result = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "invalid-guid"
+            )
+
+            assert result is None
+
+    async def test_uses_cache_on_second_call(self, fake_token):
+        """Segunda llamada usa caché, no llama a Graph."""
+        mock_client = AsyncMock()
+        mock_response = {"displayName": "Test User"}
+
+        with patch.object(planner_import, "graph_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = mock_response
+
+            # Primera llamada
+            result1 = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "guid-cache-test"
+            )
+
+            # Segunda llamada
+            result2 = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "guid-cache-test"
+            )
+
+            assert result1 == "Test User"
+            assert result2 == "Test User"
+            # graph_request solo debe llamarse una vez (primera llamada)
+            assert mock_req.call_count == 1
+
+
+class TestBuildReportHtmlBucketOrder:
+    """Test para verificar ordenamiento de buckets en HTML."""
+
+    def test_backlog_before_gateway(self):
+        """Tareas Backlog aparecen antes que Gateway."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Gateway Task",
+                "bucketId": "bucket-gateway",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-01T00:00:00Z",
+                "lastModifiedDateTime": "2026-01-01T00:00:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            },
+            {
+                "id": "task2",
+                "title": "Backlog Task",
+                "bucketId": "bucket-backlog",
+                "percentComplete": 0,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-01T00:00:00Z",
+                "lastModifiedDateTime": "2026-01-01T00:00:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            },
+        ]
+        buckets_dict = {
+            "bucket-backlog": "Backlog",
+            "bucket-gateway": "Gateway",
+        }
+
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+
+        # Encontrar índices de aparición
+        backlog_idx = html.find("Backlog Task")
+        gateway_idx = html.find("Gateway Task")
+
+        # Backlog debe aparecer antes que Gateway
+        assert backlog_idx > 0, "Backlog Task no encontrada"
+        assert gateway_idx > 0, "Gateway Task no encontrada"
+        assert backlog_idx < gateway_idx, "Backlog debe aparecer antes que Gateway"
+
+
+class TestBuildReportHtmlCreatedColumn:
+    """Test para verificar columna 'Creado' en HTML."""
+
+
+# ── Fixes Round 2: Tests para columnas %, Modificado, y colores ─────────────────
+
+class TestPercentColumnWithChecklist:
+    """Fix 1: Columna % usa ratio de checklist, no percentComplete."""
+
+    def test_percent_column_shows_checklist_ratio(self):
+        """Tarea con ChecklistDone=3, ChecklistTotal=5 → columna % muestra 60%."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Task with Checklist",
+                "bucketId": "bucket1",
+                "percentComplete": 50,  # valor manual del PM (irrelevante)
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 3,
+                "ChecklistTotal": 5,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # La columna % debe mostrar "60%" (3/5)
+        assert "60%" in html, "Columna % no muestra ratio de checklist"
+
+    def test_percent_column_shows_dash_without_checklist(self):
+        """Tarea sin checklist (ChecklistTotal=0) → columna % muestra '-'."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Task without Checklist",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que hay un "-" en la celda de %
+        # Buscar la fila con la tarea
+        assert "Task without Checklist" in html
+        # La columna % debe mostrar "-"
+        assert "<td style=\"text-align: center;\">-</td>" in html
+
+
+
+
+class TestTaskRowColors:
+    """Fix 4.3: Colores de fila alineados con chart."""
+
+    def test_row_color_completed_is_green(self):
+        """Tarea completada (percentComplete=100) → fondo verde."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Completed Task",
+                "bucketId": "bucket1",
+                "percentComplete": 100,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color verde #c8e6c8 en la fila
+        assert '#c8e6c8' in html, "Color verde para tarea completada no encontrado"
+
+    def test_row_color_in_progress_is_orange(self):
+        """Tarea en progreso (0 < percentComplete < 100) → fondo naranja."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "In Progress Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,  # En progreso
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color naranja #ffe0b0 en la fila
+        assert '#ffe0b0' in html, "Color naranja para tarea en progreso no encontrado"
+
+    def test_row_color_overdue_is_red(self):
+        """Tarea vencida (due < today, percentComplete < 100) → fondo rojo."""
+        from datetime import date, timedelta
+        yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Overdue Task",
+                "bucketId": "bucket1",
+                "percentComplete": 30,  # No completada
+                "assignments": {},
+                "dueDateTime": f"{yesterday}T00:00:00Z",  # vencida
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color rojo #f9d0d0 en la fila
+        assert '#f9d0d0' in html, "Color rojo para tarea vencida no encontrado"
+
+    def test_row_color_not_started_is_gray(self):
+        """Tarea sin iniciar (percentComplete=0) → fondo gris."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Not Started Task",
+                "bucketId": "bucket1",
+                "percentComplete": 0,  # Sin iniciar
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Buscar color gris #e8e8e8 en la fila
+        assert '#e8e8e8' in html, "Color gris para tarea sin iniciar no encontrado"
+
+
+class TestStatusBadgeVibrantColors:
+    """Fix 4.4: Status badges con colores vibrantes."""
+
+    def test_status_badge_completada_white_on_green(self):
+        """Completada: texto blanco sobre fondo verde #107c10."""
+        from planner_import import _status_badge
+        badge = _status_badge(100)
+        assert "#107c10" in badge, "Color de fondo para 'Completada' incorrecto"
+        assert "Completada" in badge
+        assert "white" in badge, "Color de texto debe ser blanco"
+
+    def test_status_badge_en_progreso_dark_on_orange(self):
+        """En Progreso: texto oscuro sobre naranja #e07800."""
+        from planner_import import _status_badge
+        badge = _status_badge(50)
+        assert "#e07800" in badge, "Color de fondo para 'En Progreso' incorrecto"
+        assert "En Progreso" in badge
+
+    def test_status_badge_sin_iniciar_white_on_gray(self):
+        """Sin Iniciar: texto blanco sobre gris #605e5c (Fix Round 3)."""
+        from planner_import import _status_badge
+        badge = _status_badge(0)
+        assert "#605e5c" in badge, "Color de fondo para 'Sin Iniciar' incorrecto"
+        assert "Sin Iniciar" in badge
+        assert "white" in badge, "Color de texto debe ser blanco para mejor contraste"
+
+
+class TestLayoutKPI50Plus50:
+    """Fix 4.1: Layout 50/50 KPI + Chart."""
+
+    def test_html_contains_50_50_table_layout(self):
+        """HTML contiene tabla con width 50% para KPI y 50% para Chart."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que hay dos columnas de 50%
+        assert 'width="50%"' in html, "Layout 50/50 no encontrado en HTML"
+        # Verificar que hay un SVG donut
+        assert '<svg' in html, "SVG donut no encontrado"
+
+    def test_donut_svg_is_150x150(self):
+        """SVG donut es 150×150 (no 100×100)."""
+        from planner_import import _build_donut_svg
+        svg = _build_donut_svg(1, 1, 1, 1, 4)
+        assert 'width="150"' in svg, "SVG width no es 150"
+        assert 'height="150"' in svg, "SVG height no es 150"
+
+    def test_kpi_cards_in_left_column(self):
+        """KPI cards están en columna izquierda (Fix Round 3: grid 2x2 con border-left:4px)."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que hay KPI cards con estilos de border-left en el grid 2x2
+        assert 'border-left:4px solid' in html, "KPI cards grid con border-left:4px no encontrados"
+        # Verificar Total con border-left:5px (en la fila superior)
+        assert 'border-left:5px solid #0078d4' in html, "Total card no encontrado"
+
+    def test_total_card_on_top(self):
+        """Total card aparece primero en columna izquierda (Fix Round 3)."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que Total aparece antes del grid 2x2
+        total_idx = html.find('border-left:5px solid #0078d4')
+        grid_idx = html.find('border-left:4px solid #107c10')
+        assert total_idx > 0, "Total card no encontrado"
+        assert grid_idx > 0, "Grid 2x2 no encontrado"
+        assert total_idx < grid_idx, "Total debe aparecer antes del grid 2x2"
+
+    def test_footer_contains_author(self):
+        """Footer contiene texto de autoría de Diego Morales (Fix Round 3)."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que footer contiene el nombre del autor
+        assert "Diego Morales" in html, "Nombre de autor 'Diego Morales' no encontrado en footer"
+        assert "Project Manager 2026" in html, "Título 'Project Manager 2026' no encontrado"
+        assert "automatización de procesos" in html, "Descripción de automatización no encontrada"
