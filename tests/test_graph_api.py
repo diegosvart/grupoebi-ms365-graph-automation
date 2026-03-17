@@ -671,7 +671,7 @@ class TestPrintReportTable:
                 "bucketId": "b1",
                 "percentComplete": 0,
                 "assignments": {},
-                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+                "createdDateTime": "2026-03-10T15:30:00Z",
             }
         ]
         buckets_dict = {"b1": "Backlog"}
@@ -2054,7 +2054,7 @@ class TestModifiedColumnTruncated:
     """Fix 2: Columna 'Modificado' truncada a solo fecha (dd-mm-yyyy)."""
 
     def test_modified_column_shows_date_only(self):
-        """lastModifiedDateTime truncado a solo dd-mm-yyyy (sin hora)."""
+        """createdDateTime truncado a solo dd-mm-yyyy (sin hora)."""
         tasks = [
             {
                 "id": "task1",
@@ -2064,7 +2064,6 @@ class TestModifiedColumnTruncated:
                 "assignments": {},
                 "dueDateTime": None,
                 "createdDateTime": "2026-01-15T10:30:00Z",
-                "lastModifiedDateTime": "2026-03-17T14:45:30Z",  # con hora
                 "CommentCount": 0,
                 "ChecklistDone": 0,
                 "ChecklistTotal": 0,
@@ -2072,8 +2071,8 @@ class TestModifiedColumnTruncated:
         ]
         buckets_dict = {"bucket1": "Backlog"}
         html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-        # Debe estar "17-03-2026" (sin hora) en la columna Modificado
-        assert "17-03-2026" in html, "Fecha de modificación no aparece correctamente"
+        # Debe estar "15-01-2026" (sin hora) en la columna Modificado
+        assert "15-01-2026" in html, "Fecha de creación no aparece correctamente"
 
 
 class TestTaskRowColors:

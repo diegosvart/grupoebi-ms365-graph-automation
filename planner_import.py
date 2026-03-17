@@ -315,7 +315,7 @@ def _print_report_table(
         status = _derive_task_status(percent)
 
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified = _format_datetime(task.get("lastModifiedDateTime", ""))
+        modified = _format_datetime(task.get("createdDateTime", ""))
         comment_count = task.get("CommentCount", 0)
 
         # Checklist: mostrar x/y si show_checklist, sino "-"
@@ -737,7 +737,7 @@ def build_report_html(
         created = _format_datetime(task.get("createdDateTime", ""))
         created_short = created[:10] if created != "-" else "-"
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified_full = _format_datetime(task.get("lastModifiedDateTime", ""))
+        modified_full = _format_datetime(task.get("createdDateTime", ""))
         # Fix 2: truncar "Modificado" a solo fecha (dd-mm-yyyy)
         modified = modified_full[:10] if modified_full != "-" else "-"
 
@@ -1058,7 +1058,7 @@ async def list_tasks(
 ) -> list[dict[str, Any]]:
     """GET /planner/plans/{id}/tasks con paginación @odata.nextLink.
     Por defecto, Microsoft Graph devuelve: id, title, bucketId, percentComplete, assignments,
-    dueDateTime, createdDateTime, lastModifiedDateTime, priority.
+    dueDateTime, createdDateTime, completedDateTime, priority.
     Nota: commentCount y conversationThreadId no están disponibles en este endpoint —
     se obtienen en get_task_details() si es necesario.
     """
@@ -1911,7 +1911,7 @@ async def run_report(
                         "PercentComplete": task.get("percentComplete", 0),
                         "DueDate": task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "",
                         "CreatedDate": task.get("createdDateTime", "")[:10] if task.get("createdDateTime") else "",
-                        "LastModified": _format_datetime(task.get("lastModifiedDateTime", "")),
+                        "LastModified": _format_datetime(task.get("createdDateTime", "")),
                         "LastCommentText": task.get("LastCommentText", ""),
                         "LastCommentDate": task.get("LastCommentDate", ""),
                         "CommentCount": task.get("CommentCount", 0),
