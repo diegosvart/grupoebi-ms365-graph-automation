@@ -3,6 +3,7 @@ resolve_email_to_guid, create_task_full, get_task_details, _print_report_table,
 run_report — sin red real."""
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -2186,3 +2187,74 @@ class TestLayoutKPI50Plus50:
         assert "Diego Morales" in html, "Nombre de autor 'Diego Morales' no encontrado en footer"
         assert "Project Manager 2026" in html, "Título 'Project Manager 2026' no encontrado"
         assert "automatización de procesos" in html, "Descripción de automatización no encontrada"
+
+
+class TestKPIProximas7Dias:
+    """Tests para el nuevo KPI 'Próximas a vencer en 7 días'."""
+
+    def test_kpi_proximas_a_vencer_appears_in_html(self):
+        """El stat card 'Vencen en 7 días' aparece en el HTML con el count correcto."""
+        today = date.today()
+        # Tarea que vence en 3 días, sin completar
+        tarea_en_ventana = {
+            "id": "task1",
+            "bucketId": "bucket1",
+            "title": "Tarea que vence pronto",
+            "percentComplete": 50,
+            "dueDateTime": (today + timedelta(days=3)).isoformat() + "T00:00:00Z",
+            "assignments": {},
+            "ChecklistDone": 0,
+            "ChecklistTotal": 0,
+        }
+        # Tarea que vence en 10 días, sin completar (fuera de ventana de 7 días)
+        tarea_fuera_ventana = {
+            "id": "task2",
+            "bucketId": "bucket1",
+            "title": "Tarea que vence lejos",
+            "percentComplete": 50,
+            "dueDateTime": (today + timedelta(days=10)).isoformat() + "T00:00:00Z",
+            "assignments": {},
+            "ChecklistDone": 0,
+            "ChecklistTotal": 0,
+        }
+        # Tarea completada que vence en 2 días (no cuenta porque está completada)
+        tarea_completada = {
+            "id": "task3",
+            "bucketId": "bucket1",
+            "title": "Tarea completada pronto",
+            "percentComplete": 100,
+            "dueDateTime": (today + timedelta(days=2)).isoformat() + "T00:00:00Z",
+            "assignments": {},
+            "ChecklistDone": 0,
+            "ChecklistTotal": 0,
+        }
+        tasks = [tarea_en_ventana, tarea_fuera_ventana, tarea_completada]
+        buckets_dict = {"bucket1": "Backlog"}
+
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026", proximas_7d=1)
+
+        # Verificar que el stat card contiene el número correcto y el texto
+        assert "Vencen en 7 días" in html, "Texto 'Vencen en 7 días' no encontrado en HTML"
+        assert ">1</span>" in html or ">1<" in html, "Número 1 no encontrado para próximas a vencer"
+
+    def test_kpi_proximas_a_vencer_zero_when_none(self):
+        """El stat card muestra 0 cuando no hay tareas próximas a vencer."""
+        tasks = [
+            {
+                "id": "task1",
+                "bucketId": "bucket1",
+                "title": "Tarea lejana",
+                "percentComplete": 50,
+                "dueDateTime": (date.today() + timedelta(days=15)).isoformat() + "T00:00:00Z",
+                "assignments": {},
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026", proximas_7d=0)
+
+        # Verificar que el stat card contiene 0
+        assert "Vencen en 7 días" in html, "Texto 'Vencen en 7 días' no encontrado"
+        assert ">0</span>" in html or ">0<" in html, "Número 0 no encontrado para próximas a vencer"

@@ -514,6 +514,7 @@ def build_report_html(
     buckets_dict: dict[str, str],
     tasks: list[dict[str, Any]],
     report_date: str,
+    proximas_7d: int = 0,
 ) -> str:
     """Genera HTML con tabla de tareas y bloque de KPIs. Estilos inline (compatibilidad Outlook).
 
@@ -522,6 +523,7 @@ def build_report_html(
         buckets_dict: {bucketId: bucketName}.
         tasks: Lista de tareas enriquecidas (con assignments, percentComplete, dueDateTime, etc).
         report_date: Fecha del reporte en formato DD-MM-YYYY.
+        proximas_7d: Cantidad de tareas que vencen en los próximos 7 días. Default: 0.
 
     Returns:
         HTML como string.
@@ -560,21 +562,6 @@ def build_report_html(
             bucket_signals[bucket_id]["sin_iniciar"] += 1
         if _parse_due(task) and _parse_due(task) < today and pct < 100:
             bucket_signals[bucket_id]["vencidas"] += 1
-
-    # Determinar señales por bucket
-    def _get_bucket_signal(bucket_id: str) -> tuple[str, str]:
-        """Retorna (emoji, color_bg) para un bucket."""
-        if bucket_id not in bucket_signals:
-            return ("🔵", "#d1ecf1")  # PENDIENTE
-        sig = bucket_signals[bucket_id]
-        if sig["vencidas"] > 0:
-            return ("⛔", "#ffd6d6")  # GATEWAY (rojo)
-        elif sig["sin_iniciar"] > sig["completadas"]:
-            return ("⚠ ", "#fff3cd")  # CUELLO (amarillo)
-        elif sig["completadas"] == sig["total"]:
-            return ("✅", "#d4edda")  # FLUYE (verde)
-        else:
-            return ("🔵", "#d1ecf1")  # PENDIENTE (azul)
 
     # Función para determinar color de fila de tarea (Fix 4.3: colores vibrantes alineados con chart)
     def _get_task_row_color(task: dict[str, Any]) -> str:
@@ -689,6 +676,16 @@ def build_report_html(
     </tr>
   </table>
 
+  <!-- Próximas a vencer en 7 días -->
+  <table width="100%" cellspacing="0" cellpadding="0" style="margin-top: 12px;">
+    <tr>
+      <td style="border-left:4px solid #ff8c00; background:#fff4e0; padding:8px 10px; border-radius:4px;">
+        <span style="font-size:20px; font-weight:bold; color:#8c5000;">{proximas_7d}</span>
+        <span style="font-size:11px; color:#8c5000; margin-left:6px;">Vencen en 7 días</span>
+      </td>
+    </tr>
+  </table>
+
   <h3>📋 Tareas por Bucket</h3>
   <table>
     <thead>
@@ -753,31 +750,6 @@ def build_report_html(
 
     html_parts.append("""    </tbody>
   </table>
-
-  <h3>🎯 Señal por Bucket</h3>
-  <table class="kpi-table">
-    <tr>
-      <th>Bucket</th>
-      <th>Señal</th>
-      <th>Total</th>
-      <th>Completadas</th>
-      <th>En Progreso</th>
-      <th>Sin Iniciar</th>
-    </tr>""")
-
-    for bucket_id, bucket_name in buckets_dict.items():
-        emoji, color = _get_bucket_signal(bucket_id)
-        sig = bucket_signals.get(bucket_id, {"total": 0, "completadas": 0, "en_progreso": 0, "sin_iniciar": 0})
-        html_parts.append(f"""    <tr>
-      <td>{bucket_name}</td>
-      <td style="background-color: {color}; text-align: center;">{emoji}</td>
-      <td style="text-align: center;">{sig['total']}</td>
-      <td style="text-align: center;">{sig['completadas']}</td>
-      <td style="text-align: center;">{sig['en_progreso']}</td>
-      <td style="text-align: center;">{sig['sin_iniciar']}</td>
-    </tr>""")
-
-    html_parts.append("""  </table>
 
   <div class="footer">
     <p>Generado por automatización de procesos · Creado y desarrollado por Diego Morales - Project Manager 2026 · Gestión de proyectos e iniciativas: {total}</p>
@@ -2091,7 +2063,19 @@ async def run_email_report(
 
                 # Generar HTML (para preview o envío)
                 report_date = date.today().strftime("%d-%m-%Y")
-                html = build_report_html(plan_title, buckets_dict, enriched_tasks, report_date)
+
+                # Calcular tareas que vencen en los próximos 7 días
+                today = date.today()
+                proximas_7d = sum(
+                    1 for t in enriched_tasks
+                    if t.get("dueDateTime")
+                    and t.get("percentComplete", 0) < 100
+                    and today <= datetime.fromisoformat(
+                        t["dueDateTime"].replace("Z", "+00:00")
+                    ).date() <= today + timedelta(days=7)
+                )
+
+                html = build_report_html(plan_title, buckets_dict, enriched_tasks, report_date, proximas_7d)
                 subject = f"[Planner] Reporte de gestión — {plan_title} ({report_date})"
 
                 # Preview mode: guardar HTML y abrir en navegador (sin enviar correo)
