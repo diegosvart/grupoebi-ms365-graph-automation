@@ -206,7 +206,7 @@ def _status_badge(percent: int) -> str:
         bg_color = "#e07800"  # naranja más vivo
     else:
         status_text = "Sin Iniciar"
-        color = "#333"
+        color = "white"
         bg_color = "#605e5c"  # gris más oscuro
     return f'<span style="background-color:{bg_color}; color:{color}; padding:4px 8px; border-radius:4px; font-weight:bold;">{status_text}</span>'
 
@@ -637,37 +637,40 @@ def build_report_html(
   <h3>📊 Resumen de Gestión</h3>
   <table width="100%" style="margin-bottom:16px;" cellspacing="8" cellpadding="0" border="0">
     <tr valign="top">
-      <!-- COLUMNA IZQUIERDA: 5 KPI cards apilados -->
-      <td width="50%" style="padding-right: 12px;">
-        <table width="100%" cellspacing="4" cellpadding="0" border="0">
+      <!-- COLUMNA IZQUIERDA: Total arriba + grid 2x2 debajo -->
+      <td width="50%" style="padding-right: 12px;" valign="top">
+        <!-- Total — fila superior completa -->
+        <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:6px;">
           <tr>
-            <td style="border-left:5px solid #0078d4; background:#e8f4fd; padding:10px 14px; margin-bottom:6px; text-align:center;">
-              <span style="font-size:28px; font-weight:bold; color:#0055a0;">{total}</span>
-              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Total</span>
+            <td style="border-left:5px solid #0078d4; background:#e8f4fd; padding:10px 14px; border-radius:4px;">
+              <span style="font-size:32px; font-weight:bold; color:#0055a0;">{total}</span>
+              <span style="font-size:13px; color:#555; margin-left:8px;">Total</span>
             </td>
           </tr>
+        </table>
+        <!-- Grid 2×2: 4 estados -->
+        <table width="100%" cellspacing="4" cellpadding="0">
           <tr>
-            <td style="border-left:5px solid #107c10; background:#c8e6c8; padding:10px 14px; margin-bottom:6px; text-align:center;">
-              <span style="font-size:28px; font-weight:bold; color:#0d6e0d;">{completadas}</span>
-              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Completadas</span>
+            <td width="50%" style="border-left:4px solid #107c10; background:#c8e6c8; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#0d6e0d;">{completadas}</div>
+              <div style="font-size:11px; color:#3f5f3f;">Completadas</div>
+            </td>
+            <td width="4"></td>
+            <td width="50%" style="border-left:4px solid #e07800; background:#ffe0b0; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#8c5d00;">{en_progreso}</div>
+              <div style="font-size:11px; color:#8c5d00;">En Progreso</div>
             </td>
           </tr>
+          <tr><td colspan="3" style="height:4px;"></td></tr>
           <tr>
-            <td style="border-left:5px solid #e07800; background:#ffe0b0; padding:10px 14px; margin-bottom:6px; text-align:center;">
-              <span style="font-size:28px; font-weight:bold; color:#8c5d00;">{en_progreso}</span>
-              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">En Progreso</span>
+            <td width="50%" style="border-left:4px solid #605e5c; background:#e8e8e8; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#3f3d3b;">{sin_iniciar}</div>
+              <div style="font-size:11px; color:#3f3d3b;">Sin Iniciar</div>
             </td>
-          </tr>
-          <tr>
-            <td style="border-left:5px solid #605e5c; background:#e8e8e8; padding:10px 14px; margin-bottom:6px; text-align:center;">
-              <span style="font-size:28px; font-weight:bold; color:#3f3d3b;">{sin_iniciar}</span>
-              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Sin Iniciar</span>
-            </td>
-          </tr>
-          <tr>
-            <td style="border-left:5px solid #d13438; background:#f9d0d0; padding:10px 14px; text-align:center;">
-              <span style="font-size:28px; font-weight:bold; color:#8c2a2e;">{vencidas}</span>
-              <span style="font-size:12px; color:#555; margin-left:8px; display:block; margin-top:4px;">Vencidas</span>
+            <td width="4"></td>
+            <td width="50%" style="border-left:4px solid #d13438; background:#f9d0d0; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#8c2a2e;">{vencidas}</div>
+              <div style="font-size:11px; color:#8c2a2e;">Vencidas</div>
             </td>
           </tr>
         </table>
@@ -797,7 +800,7 @@ def build_report_html(
     html_parts.append("""  </table>
 
   <div class="footer">
-    <p>Generado por planner_import.py · Microsoft Planner via Graph API · {report_date} · {total} tareas</p>
+    <p>Generado por automatización de procesos · Creado y desarrollado por Diego Morales - Project Manager 2026 · Gestión de proyectos e iniciativas: {total}</p>
   </div>
 </body>
 </html>""".format(report_date=report_date, total=total))
