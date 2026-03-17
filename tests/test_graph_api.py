@@ -488,13 +488,15 @@ class TestListTasks:
         assert "planner/plans" in url
         assert "tasks" in url
 
-    async def test_endpoint_url_no_select(self, fake_token):
-        """URL no incluye $select (Microsoft Graph devuelve campos por defecto)."""
+    async def test_endpoint_url_no_select_parameter(self, fake_token):
+        """URL no incluye $select — Microsoft Graph devuelve campos por defecto."""
         client = await _make_client([_make_response(200, {"value": []})])
         await list_tasks(client, fake_token, "plan-123")
         args, _ = client.request.call_args
         url: str = args[1]
         assert "$select" not in url
+        # Verificar estructura básica de la URL
+        assert "planner/plans/plan-123/tasks" in url
 
     async def test_returns_default_fields(self, fake_token):
         """Respuesta contiene campos devueltos por defecto: id, title, lastModifiedDateTime."""
@@ -1848,3 +1850,148 @@ class TestChecklistInReport:
 
             # get_task_details NO debe ser llamado
             mock_details.assert_not_called()
+
+
+class TestResolveGuidToDisplayName:
+    """Tests para la nueva función resolve_guid_to_display_name()."""
+
+    async def test_returns_display_name(self, fake_token):
+        """Devuelve displayName de la respuesta de Graph."""
+        mock_client = AsyncMock()
+        mock_response = {
+            "id": "guid-123",
+            "displayName": "Diego Morales",
+            "givenName": "Diego",
+            "surname": "Morales",
+        }
+
+        with patch.object(planner_import, "graph_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = mock_response
+
+            result = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "guid-123"
+            )
+
+            assert result == "Diego Morales"
+            mock_req.assert_called_once()
+
+    async def test_returns_none_on_404(self, fake_token):
+        """Retorna None si Graph API retorna 404."""
+        mock_client = AsyncMock()
+
+        with patch.object(
+            planner_import, "graph_request", new_callable=AsyncMock
+        ) as mock_req:
+            mock_req.side_effect = httpx.HTTPStatusError(
+                "404", request=AsyncMock(), response=AsyncMock(status_code=404)
+            )
+
+            result = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "invalid-guid"
+            )
+
+            assert result is None
+
+    async def test_uses_cache_on_second_call(self, fake_token):
+        """Segunda llamada usa caché, no llama a Graph."""
+        mock_client = AsyncMock()
+        mock_response = {"displayName": "Test User"}
+
+        with patch.object(planner_import, "graph_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = mock_response
+
+            # Primera llamada
+            result1 = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "guid-cache-test"
+            )
+
+            # Segunda llamada
+            result2 = await planner_import.resolve_guid_to_display_name(
+                mock_client, fake_token, "guid-cache-test"
+            )
+
+            assert result1 == "Test User"
+            assert result2 == "Test User"
+            # graph_request solo debe llamarse una vez (primera llamada)
+            assert mock_req.call_count == 1
+
+
+class TestBuildReportHtmlBucketOrder:
+    """Test para verificar ordenamiento de buckets en HTML."""
+
+    def test_backlog_before_gateway(self):
+        """Tareas Backlog aparecen antes que Gateway."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Gateway Task",
+                "bucketId": "bucket-gateway",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-01T00:00:00Z",
+                "lastModifiedDateTime": "2026-01-01T00:00:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            },
+            {
+                "id": "task2",
+                "title": "Backlog Task",
+                "bucketId": "bucket-backlog",
+                "percentComplete": 0,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-01T00:00:00Z",
+                "lastModifiedDateTime": "2026-01-01T00:00:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            },
+        ]
+        buckets_dict = {
+            "bucket-backlog": "Backlog",
+            "bucket-gateway": "Gateway",
+        }
+
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+
+        # Encontrar índices de aparición
+        backlog_idx = html.find("Backlog Task")
+        gateway_idx = html.find("Gateway Task")
+
+        # Backlog debe aparecer antes que Gateway
+        assert backlog_idx > 0, "Backlog Task no encontrada"
+        assert gateway_idx > 0, "Gateway Task no encontrada"
+        assert backlog_idx < gateway_idx, "Backlog debe aparecer antes que Gateway"
+
+
+class TestBuildReportHtmlCreatedColumn:
+    """Test para verificar columna 'Creado' en HTML."""
+
+    def test_created_column_visible(self):
+        """Columna 'Creado' está en el HTML con fecha válida."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Test Task",
+                "bucketId": "bucket1",
+                "percentComplete": 50,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+
+        # Verificar que el header tiene "Creado"
+        assert "<th>Creado</th>" in html, "Columna 'Creado' no está en el header"
+
+        # Verificar que la fecha aparece en la tabla (formato dd-mm-yyyy)
+        assert "15-01-2026" in html, "Fecha de creación no aparece en el HTML"

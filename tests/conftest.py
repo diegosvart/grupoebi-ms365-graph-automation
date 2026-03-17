@@ -68,6 +68,16 @@ def reset_label_map():
     planner_import.LABEL_MAP.update(original)
 
 
+@pytest.fixture(autouse=True)
+def reset_guid_to_name_cache():
+    """_GUID_TO_NAME_CACHE es global mutable — resetear entre tests."""
+    original = dict(planner_import._GUID_TO_NAME_CACHE)
+    planner_import._GUID_TO_NAME_CACHE.clear()
+    yield
+    planner_import._GUID_TO_NAME_CACHE.clear()
+    planner_import._GUID_TO_NAME_CACHE.update(original)
+
+
 @pytest.fixture
 def fake_token() -> str:
     return "test-bearer-token"

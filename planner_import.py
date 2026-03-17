@@ -68,11 +68,23 @@ PRIORITY_MAP: dict[str, int] = {
     "none": 9,
 }
 
+# Orden operativo de buckets en reportes
+BUCKET_ORDER: dict[str, int] = {
+    "backlog": 0,
+    "en curso": 1,
+    "gateway": 2,
+    "completado": 3,
+    "completados": 3,
+}
+
 # Se construye en runtime por configure_plan_labels(): {"TI": "category1", ...}
 LABEL_MAP: dict[str, str] = {}
 
 # Cache de resolución GUID → email (para modo email-report)
 _GUID_TO_EMAIL_CACHE: dict[str, str | None] = {}
+
+# Cache de resolución GUID → displayName (para reportes HTML)
+_GUID_TO_NAME_CACHE: dict[str, str | None] = {}
 
 
 # ── Transformaciones ──────────────────────────────────────────────────────────
@@ -180,6 +192,74 @@ def _format_datetime(dt_str: str) -> str:
         return dt.astimezone().strftime("%d-%m-%Y %H:%M")
     except ValueError:
         return "-"
+
+
+def _status_badge(percent: int) -> str:
+    """Genera pill badge HTML coloreado según estado (Completada / En Progreso / Sin Iniciar)."""
+    if percent == 100:
+        status_text = "Completada"
+        color = "#107c10"
+        bg_color = "#dff0d8"
+    elif percent > 0:
+        status_text = "En Progreso"
+        color = "#ff8c00"
+        bg_color = "#fff4ce"
+    else:
+        status_text = "Sin Iniciar"
+        color = "#8a8886"
+        bg_color = "#f3f2f1"
+    return f'<span style="background-color:{bg_color}; color:{color}; padding:4px 8px; border-radius:4px; font-weight:bold;">{status_text}</span>'
+
+
+def _progress_bar(percent: int) -> str:
+    """Genera barra CSS con porcentaje."""
+    color = "#107c10" if percent == 100 else "#ff8c00" if percent > 0 else "#8a8886"
+    return f'<div style="width:60px; height:20px; background-color:#f0f0f0; border-radius:3px; overflow:hidden;"><div style="width:{percent}%; height:100%; background-color:{color};"></div></div> {percent}%'
+
+
+def _checklist_badge(done: int, total: int) -> str:
+    """Genera checklist badge coloreado."""
+    if total == 0:
+        return "—"
+    if done == total:
+        color = "#107c10"
+        bg = "#dff0d8"
+    else:
+        color = "#0078d4"
+        bg = "#e8f4fd"
+    return f'<span style="background-color:{bg}; color:{color}; padding:2px 6px; border-radius:3px;">{done}/{total}</span>'
+
+
+def _build_donut_svg(
+    completadas: int, en_progreso: int, sin_iniciar: int, vencidas: int, total: int
+) -> str:
+    """Genera SVG donut chart con circunferencia 251.33 px (radio 40px)."""
+    if total == 0:
+        return '<svg width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f3f2f1"/></svg>'
+
+    circ = 251.33
+    segments = [
+        (completadas, "#107c10"),  # verde
+        (en_progreso, "#ff8c00"),  # naranja
+        (sin_iniciar, "#8a8886"),  # gris
+        (vencidas, "#d13438"),  # rojo
+    ]
+    paths = []
+    offset = 0.0
+    for count, color in segments:
+        dash = count / total * circ
+        paths.append(
+            f'<circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="16" '
+            f'stroke-dasharray="{dash:.1f} {circ - dash:.1f}" '
+            f'stroke-dashoffset="-{offset:.1f}" transform="rotate(-90 50 50)"/>'
+        )
+        offset += dash
+    pct = f"{int(completadas / total * 100)}%"
+    legend_svg = f'''<svg width="100" height="100" viewBox="0 0 100 100">
+    {"".join(paths)}
+    <text x="50" y="55" text-anchor="middle" font-size="20" font-weight="bold" fill="#333">{pct}</text>
+  </svg>'''
+    return legend_svg
 
 
 def _print_report_table(
@@ -515,28 +595,64 @@ def build_report_html(
     # Construir HTML
     html_parts: list[str] = []
 
-    # Cabecera
+    # Cabecera con banner degradado
     html_parts.append(f"""<html>
 <head>
   <meta charset="UTF-8" />
   <style>
-    body {{ font-family: Segoe UI, Arial, sans-serif; font-size: 12px; }}
+    body {{ font-family: Segoe UI, Arial, sans-serif; font-size: 12px; color: #333; }}
     table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
-    th, td {{ border: 1px solid #ccc; padding: 8px; text-align: left; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
     th {{ background-color: #0078d4; color: white; font-weight: bold; }}
-    .header-section {{ background-color: #0078d4; color: white; padding: 15px; margin-bottom: 10px; border-radius: 5px; }}
+    .header-banner {{ background: linear-gradient(135deg, #0078d4, #005a9e); border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; color: white; }}
+    .header-banner h1 {{ font-size: 20px; font-weight: 700; margin: 0; }}
+    .header-banner p {{ font-size: 12px; color: rgba(255,255,255,0.8); margin: 5px 0 0 0; }}
+    .kpi-cards {{ display: table; width: 100%; margin-bottom: 16px; }}
+    .kpi-card {{ display: table-cell; width: 20%; padding: 12px 8px; border-left: 4px solid #0078d4; background-color: #f5f9ff; text-align: center; }}
+    .kpi-card.green {{ border-left-color: #107c10; background-color: #dff0d8; }}
+    .kpi-card.orange {{ border-left-color: #ff8c00; background-color: #fff4ce; }}
+    .kpi-card.gray {{ border-left-color: #8a8886; background-color: #f3f2f1; }}
+    .kpi-card.red {{ border-left-color: #d13438; background-color: #fde7e9; }}
+    .kpi-card .number {{ font-size: 32px; font-weight: bold; color: #333; display: block; }}
+    .kpi-card .label {{ font-size: 11px; color: #666; margin-top: 4px; }}
     .kpi-section {{ margin-top: 20px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }}
     .kpi-table {{ width: 100%; }}
-    .footer {{ margin-top: 20px; font-size: 11px; color: #666; font-style: italic; }}
+    .donut-container {{ display: table; width: 100%; }}
+    .donut-cell {{ display: table-cell; width: 150px; text-align: center; padding: 10px; }}
+    .legend-cell {{ display: table-cell; padding: 10px; vertical-align: middle; }}
+    .legend-item {{ font-size: 11px; margin: 4px 0; }}
+    .legend-dot {{ display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }}
+    .footer {{ margin-top: 20px; padding: 10px; font-size: 11px; color: #999; border-top: 1px solid #ddd; }}
   </style>
 </head>
 <body>
-  <div class="header-section">
-    <h2 style="margin: 0;">{plan_title}</h2>
-    <p style="margin: 5px 0;">Reporte de gestión — {report_date}</p>
+  <div class="header-banner">
+    <h1 style="margin: 0;">{plan_title}</h1>
+    <p style="margin: 5px 0 0 0;">Reporte de gestión · {report_date} · {total} tareas</p>
   </div>
 
-  <h3>Tareas por Bucket</h3>
+  <div class="kpi-cards">
+    <div class="kpi-card"><span class="number">{total}</span><span class="label">Total</span></div>
+    <div class="kpi-card green"><span class="number">{completadas}</span><span class="label">Completadas</span></div>
+    <div class="kpi-card orange"><span class="number">{en_progreso}</span><span class="label">En Progreso</span></div>
+    <div class="kpi-card gray"><span class="number">{sin_iniciar}</span><span class="label">Sin Iniciar</span></div>
+    <div class="kpi-card red"><span class="number">{vencidas}</span><span class="label">Vencidas</span></div>
+  </div>
+
+  <h3>📊 Distribución de Estado</h3>
+  <div class="donut-container">
+    <div class="donut-cell">
+      {_build_donut_svg(completadas, en_progreso, sin_iniciar, vencidas, total)}
+    </div>
+    <div class="legend-cell">
+      <div class="legend-item"><span class="legend-dot" style="background-color:#107c10;"></span>Completadas: {completadas}</div>
+      <div class="legend-item"><span class="legend-dot" style="background-color:#ff8c00;"></span>En Progreso: {en_progreso}</div>
+      <div class="legend-item"><span class="legend-dot" style="background-color:#8a8886;"></span>Sin Iniciar: {sin_iniciar}</div>
+      <div class="legend-item"><span class="legend-dot" style="background-color:#d13438;"></span>Vencidas: {vencidas}</div>
+    </div>
+  </div>
+
+  <h3>📋 Tareas por Bucket</h3>
   <table>
     <thead>
       <tr>
@@ -545,6 +661,7 @@ def build_report_html(
         <th>Asignado</th>
         <th>Estado</th>
         <th>%</th>
+        <th>Creado</th>
         <th>Vence</th>
         <th>Modificado</th>
         <th>Checklist</th>
@@ -553,24 +670,36 @@ def build_report_html(
     </thead>
     <tbody>""")
 
-    for task in tasks:
+    # Ordenar tareas por bucket (Backlog → En curso → Gateway → Completado)
+    sorted_tasks = sorted(
+        tasks,
+        key=lambda t: (
+            BUCKET_ORDER.get(
+                buckets_dict.get(t.get("bucketId", ""), "").lower(), 99
+            ),
+            buckets_dict.get(t.get("bucketId", ""), ""),
+        ),
+    )
+
+    for task in sorted_tasks:
         bucket_id = task.get("bucketId", "")
         bucket_name = buckets_dict.get(bucket_id, "?")
         title = task.get("title", "")[:50]
 
-        # Extraer asignados
-        assignments = task.get("assignments", {})
-        assignee = ", ".join([str(k)[:12] for k in assignments.keys()])[:30] if assignments else "(sin asignar)"
+        # Extraer asignados — usar AssigneeDisplay si está disponible
+        assignee = task.get("AssigneeDisplay", "(sin asignar)")
 
         percent = task.get("percentComplete", 0)
-        status = _derive_task_status(percent)
+        status_badge = _status_badge(percent)
+        created = _format_datetime(task.get("createdDateTime", ""))
+        created_short = created[:10] if created != "-" else "-"
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
         modified = _format_datetime(task.get("lastModifiedDateTime", ""))
 
-        # Checklist: mostrar x/y si total > 0, sino "-"
+        # Checklist badge coloreado
         cl_total = task.get("ChecklistTotal", 0)
         cl_done = task.get("ChecklistDone", 0)
-        checklist_display = f"{cl_done}/{cl_total}" if cl_total > 0 else "-"
+        checklist_badge_html = _checklist_badge(cl_done, cl_total)
 
         # Comentarios
         comment_count = task.get("CommentCount", 0)
@@ -581,67 +710,48 @@ def build_report_html(
         <td>{bucket_name}</td>
         <td>{title}</td>
         <td>{assignee}</td>
-        <td>{status}</td>
-        <td style="text-align: center;">{percent}</td>
+        <td>{status_badge}</td>
+        <td style="text-align: center;">{percent}%</td>
+        <td>{created_short}</td>
         <td>{due}</td>
         <td>{modified}</td>
-        <td style="text-align: center;">{checklist_display}</td>
+        <td style="text-align: center;">{checklist_badge_html}</td>
         <td style="text-align: center;">{comment_count}</td>
       </tr>""")
 
     html_parts.append("""    </tbody>
   </table>
 
-  <div class="kpi-section">
-    <h3>KPIs — Resumen del Plan</h3>
-    <table class="kpi-table">
-      <tr>
-        <td style="text-align: center;"><strong>Total</strong></td>
-        <td style="text-align: center;"><strong>Completadas</strong></td>
-        <td style="text-align: center;"><strong>En Progreso</strong></td>
-        <td style="text-align: center;"><strong>Sin Iniciar</strong></td>
-        <td style="text-align: center;"><strong>Vencidas</strong></td>
-      </tr>
-      <tr>
-        <td style="text-align: center;">{}</td>
-        <td style="text-align: center;">{}</td>
-        <td style="text-align: center;">{}</td>
-        <td style="text-align: center;">{}</td>
-        <td style="text-align: center;">{}</td>
-      </tr>
-    </table>
-
-    <h4>Señal por Bucket</h4>
-    <table class="kpi-table">
-      <tr>
-        <th>Bucket</th>
-        <th>Señal</th>
-        <th>Total</th>
-        <th>Completadas</th>
-        <th>En Progreso</th>
-        <th>Sin Iniciar</th>
-      </tr>""".format(total, completadas, en_progreso, sin_iniciar, vencidas))
+  <h3>🎯 Señal por Bucket</h3>
+  <table class="kpi-table">
+    <tr>
+      <th>Bucket</th>
+      <th>Señal</th>
+      <th>Total</th>
+      <th>Completadas</th>
+      <th>En Progreso</th>
+      <th>Sin Iniciar</th>
+    </tr>""")
 
     for bucket_id, bucket_name in buckets_dict.items():
         emoji, color = _get_bucket_signal(bucket_id)
         sig = bucket_signals.get(bucket_id, {"total": 0, "completadas": 0, "en_progreso": 0, "sin_iniciar": 0})
-        html_parts.append(f"""      <tr>
-        <td>{bucket_name}</td>
-        <td style="background-color: {color}; text-align: center;">{emoji}</td>
-        <td style="text-align: center;">{sig['total']}</td>
-        <td style="text-align: center;">{sig['completadas']}</td>
-        <td style="text-align: center;">{sig['en_progreso']}</td>
-        <td style="text-align: center;">{sig['sin_iniciar']}</td>
-      </tr>""")
+        html_parts.append(f"""    <tr>
+      <td>{bucket_name}</td>
+      <td style="background-color: {color}; text-align: center;">{emoji}</td>
+      <td style="text-align: center;">{sig['total']}</td>
+      <td style="text-align: center;">{sig['completadas']}</td>
+      <td style="text-align: center;">{sig['en_progreso']}</td>
+      <td style="text-align: center;">{sig['sin_iniciar']}</td>
+    </tr>""")
 
-    html_parts.append("""    </table>
-  </div>
+    html_parts.append("""  </table>
 
   <div class="footer">
-    <p>Generado automáticamente por planner_import.py — Modo: email-report</p>
+    <p>Generado por planner_import.py · Microsoft Planner via Graph API · {report_date} · {total} tareas</p>
   </div>
 </body>
-</html>""")
+</html>""".format(report_date=report_date, total=total))
 
     return "\n".join(html_parts)
 
@@ -896,8 +1006,9 @@ async def list_tasks(
 ) -> list[dict[str, Any]]:
     """GET /planner/plans/{id}/tasks con paginación @odata.nextLink.
     Por defecto, Microsoft Graph devuelve: id, title, bucketId, percentComplete, assignments,
-    dueDateTime, createdDateTime, lastModifiedDateTime. Nota: conversationThreadId no está
-    disponible en este endpoint.
+    dueDateTime, createdDateTime, lastModifiedDateTime, priority.
+    Nota: commentCount y conversationThreadId no están disponibles en este endpoint —
+    se obtienen en get_task_details() si es necesario.
     """
     tasks: list[dict[str, Any]] = []
     endpoint: str = f"/planner/plans/{plan_id}/tasks"
@@ -1109,6 +1220,30 @@ async def resolve_guid_to_email(
         email = None
     _GUID_TO_EMAIL_CACHE[guid] = email
     return email
+
+
+async def resolve_guid_to_display_name(
+    client: httpx.AsyncClient, token: str, guid: str
+) -> str | None:
+    """Resuelve GUID de usuario Azure AD a nombre legible. Usa caché global.
+    Retorna None si falla.
+    Permiso requerido: User.Read.All
+    """
+    if guid in _GUID_TO_NAME_CACHE:
+        return _GUID_TO_NAME_CACHE[guid]
+    try:
+        data = await graph_request(
+            client, "GET", f"/users/{guid}?$select=displayName,givenName,surname", token
+        )
+        name = (
+            data.get("displayName")
+            or f"{data.get('givenName', '')} {data.get('surname', '')}".strip()
+            or None
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        name = None
+    _GUID_TO_NAME_CACHE[guid] = name
+    return name
 
 
 async def create_task_full(
@@ -1863,11 +1998,36 @@ async def run_email_report(
                     )
                     checklist_map = {tid: (done, total) for tid, done, total in results}
 
+                # Pre-fetch paralelo de nombres de asignados
+                all_guids: set[str] = {
+                    g for t in tasks for g in t.get("assignments", {}).keys()
+                }
+                names_map: dict[str, str] = {}
+                if all_guids:
+                    sem_names = asyncio.Semaphore(5)
+
+                    async def _fetch_one_name(guid: str) -> tuple[str, str | None]:
+                        async with sem_names:
+                            name = await resolve_guid_to_display_name(client, token, guid)
+                            await asyncio.sleep(0.1)
+                            return guid, name
+
+                    name_results = await asyncio.gather(
+                        *[_fetch_one_name(g) for g in all_guids]
+                    )
+                    names_map = {g: n for g, n in name_results if n is not None}
+
                 # Enriquecer tareas (igual que en run_report)
                 enriched_tasks = []
                 for task in tasks:
                     task_id = task.get("id", "")
                     cl_done, cl_total = checklist_map.get(task_id, (0, 0))
+
+                    assignments = task.get("assignments", {})
+                    assignee_names = [
+                        names_map.get(g, g[:12]) for g in assignments.keys()
+                    ]
+                    assignee_display = ", ".join(assignee_names)[:40] if assignee_names else "(sin asignar)"
 
                     enriched_tasks.append({
                         **task,
@@ -1875,6 +2035,7 @@ async def run_email_report(
                         "ChecklistDone": cl_done,
                         "ChecklistTotal": cl_total,
                         "priority": task.get("priority", 5),
+                        "AssigneeDisplay": assignee_display,
                     })
 
                 # Generar HTML (para preview o envío)
