@@ -676,7 +676,7 @@ class TestPrintReportTable:
         planner_import._print_report_table("Plan Test", buckets_dict, tasks)
         captured = capsys.readouterr()
         assert "Modificado" in captured.out
-        assert "2026-03-10" in captured.out
+        assert "10-03-2026" in captured.out
 
     def test_task_without_last_modified_shows_dash(self, capsys):
         """lastModifiedDateTime ausente → imprime '-'."""
@@ -1644,3 +1644,207 @@ class TestRunEmailReportTo:
             mock_send.assert_called_once()
             call_args = mock_send.call_args
             assert call_args[0][2] == ["pm@example.com"]
+
+
+# ── Nuevos tests para _format_datetime, CommentCount, Checklist ─────────────────
+
+class TestFormatDatetime:
+    """Tests para la nueva función _format_datetime()."""
+
+    def test_utc_z_format(self):
+        """Convierte ISO 8601 Z a formato local dd-mm-yyyy hh:mm."""
+        from planner_import import _format_datetime
+
+        result = _format_datetime("2026-03-16T23:40:45Z")
+        # Esperamos que contenga la fecha y hora (puede variar por zona horaria)
+        assert "2026" in result or "03-2026" in result  # año presente
+        assert ":" in result  # hora presente
+
+    def test_empty_string_returns_dash(self):
+        """Cadena vacía retorna '-'."""
+        from planner_import import _format_datetime
+
+        assert _format_datetime("") == "-"
+
+    def test_invalid_returns_dash(self):
+        """Formato inválido retorna '-'."""
+        from planner_import import _format_datetime
+
+        assert _format_datetime("no-es-fecha") == "-"
+
+
+class TestCommentCount:
+    """Tests para extracción de commentCount en enriquecimiento de tareas."""
+
+    async def test_comment_count_extracted_from_task(self, fake_token):
+        """commentCount en tarea → campo CommentCount en enriched_task."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "_print_report_table") as mock_table, \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task with comments",
+                    "bucketId": "bucket1",
+                    "commentCount": 3,
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=False)
+
+            # Verificar que _print_report_table fue llamado
+            mock_table.assert_called_once()
+            tasks_arg = mock_table.call_args[0][2]
+            assert len(tasks_arg) == 1
+            assert tasks_arg[0]["CommentCount"] == 3
+
+    async def test_comment_count_defaults_to_zero(self, fake_token):
+        """Sin commentCount en tarea → CommentCount=0."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "_print_report_table") as mock_table, \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task without commentCount",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 0,
+                }
+            ]
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=False)
+
+            tasks_arg = mock_table.call_args[0][2]
+            assert tasks_arg[0]["CommentCount"] == 0
+
+
+class TestChecklistInReport:
+    """Tests para el nuevo parámetro --checklist en run_report."""
+
+    async def test_checklist_calls_get_task_details(self, fake_token):
+        """Con fetch_checklist=True, get_task_details es llamado por tarea."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "_print_report_table"), \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+            mock_details.return_value = {
+                "checklist": {
+                    "item1": {"title": "Do X", "isChecked": True},
+                    "item2": {"title": "Do Y", "isChecked": False},
+                    "item3": {"title": "Do Z", "isChecked": True},
+                }
+            }
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=True)
+
+            # get_task_details debe ser llamado para la tarea
+            mock_details.assert_called()
+
+    async def test_checklist_count_format(self, fake_token):
+        """ChecklistDone=2, ChecklistTotal=5 → '2/5' en salida."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "_print_report_table") as mock_table, \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+            mock_details.return_value = {
+                "checklist": {
+                    "item1": {"isChecked": True},
+                    "item2": {"isChecked": True},
+                    "item3": {"isChecked": False},
+                    "item4": {"isChecked": False},
+                    "item5": {"isChecked": False},
+                }
+            }
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=True)
+
+            tasks_arg = mock_table.call_args[0][2]
+            assert tasks_arg[0]["ChecklistDone"] == 2
+            assert tasks_arg[0]["ChecklistTotal"] == 5
+
+    async def test_checklist_skipped_without_flag(self, fake_token):
+        """Sin --checklist, get_task_details NO es llamado."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "_print_report_table"), \
+             patch.object(planner_import, "_print_kpi_block"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_list.return_value = [{"id": "plan1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "bucket1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {
+                    "id": "task1",
+                    "title": "Task",
+                    "bucketId": "bucket1",
+                    "assignments": {},
+                    "percentComplete": 50,
+                }
+            ]
+
+            from planner_import import run_report
+
+            await run_report("group1", fetch_comments=False, fetch_checklist=False)
+
+            # get_task_details NO debe ser llamado
+            mock_details.assert_not_called()

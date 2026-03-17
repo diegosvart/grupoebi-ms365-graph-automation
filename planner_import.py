@@ -171,29 +171,55 @@ def _parse_due(task: dict[str, Any]) -> date | None:
         return None
 
 
+def _format_datetime(dt_str: str) -> str:
+    """Convierte ISO 8601 a 'dd-mm-yyyy hh:mm' en hora local del sistema. Retorna '-' si falla."""
+    if not dt_str:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%d-%m-%Y %H:%M")
+    except ValueError:
+        return "-"
+
+
 def _print_report_table(
     plan_title: str,
     buckets_dict: dict[str, str],
     tasks: list[dict[str, Any]],
     show_comments: bool = False,
+    show_checklist: bool = False,
 ) -> None:
     """Imprime tabla de reporte con tareas agrupadas por bucket.
 
-    Columnas: Bucket | Título | Asignado | Estado | % | Vence | Modificado [| Último comentario]
+    Columnas: Bucket | Título | Asignado | Estado | % | Vence | Modificado | Coment. [| Checklist] [| Último comentario]
 
     Nota: el campo Assignee muestra el userId de Azure AD (GUID),
     no el email ni el nombre del usuario.
     """
     print(f"\n📋 {plan_title}")
-    if show_comments:
-        width = 181
-    else:
-        width = 134
+    # Calculando ancho: 20+35+20+12+3+12+16+7 = 125 base + checklist 8 + comentario 39
+    base_width = 20 + 35 + 20 + 12 + 3 + 12 + 16 + 7  # 125
+    checklist_width = 8 if show_checklist else 0
+    comments_width = 39 if show_comments else 0
+    width = base_width + checklist_width + comments_width
+
     print("  " + "─" * width)
+    header_parts = [
+        f"{'Bucket':<20}",
+        f"{'Título':<35}",
+        f"{'Asignado':<20}",
+        f"{'Estado':<12}",
+        f"{'%':>3}",
+        f"{'Vence':<12}",
+        f"{'Modificado':<16}",
+        f"{'Coment.':<7}",
+    ]
+    if show_checklist:
+        header_parts.append(f"{'Checklist':<8}")
     if show_comments:
-        print(f"  {'Bucket':<20} {'Título':<35} {'Asignado':<20} {'Estado':<12} {'%':>3} {'Vence':<12} {'Modificado':<12} {'Último comentario':<39}")
-    else:
-        print(f"  {'Bucket':<20} {'Título':<35} {'Asignado':<20} {'Estado':<12} {'%':>3} {'Vence':<12} {'Modificado':<12}")
+        header_parts.append(f"{'Último comentario':<39}")
+
+    print("  " + " ".join(header_parts))
     print("  " + "─" * width)
 
     for task in tasks:
@@ -209,13 +235,33 @@ def _print_report_table(
         status = _derive_task_status(percent)
 
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified = task.get("lastModifiedDateTime", "")[:10] if task.get("lastModifiedDateTime") else "-"
+        modified = _format_datetime(task.get("lastModifiedDateTime", ""))
+        comment_count = task.get("CommentCount", 0)
 
+        # Checklist: mostrar x/y si show_checklist, sino "-"
+        cl_total = task.get("ChecklistTotal", 0)
+        cl_done = task.get("ChecklistDone", 0)
+        checklist_display = f"{cl_done}/{cl_total}" if cl_total > 0 else "-"
+
+        # Construir fila dinámicamente
+        row_parts = [
+            f"{bucket_name:<20}",
+            f"{title:<35}",
+            f"{assignee:<20}",
+            f"{status:<12}",
+            f"{percent:>3}",
+            f"{due:<12}",
+            f"{modified:<16}",
+            f"{comment_count:<7}",
+        ]
+        if show_checklist:
+            row_parts.append(f"{checklist_display:<8}")
         if show_comments:
             comment_text = task.get("LastCommentText", "")[:38] or "-"
-            print(f"  {bucket_name:<20} {title:<35} {assignee:<20} {status:<12} {percent:>3} {due:<12} {modified:<12} {comment_text:<39}")
-        else:
-            print(f"  {bucket_name:<20} {title:<35} {assignee:<20} {status:<12} {percent:>3} {due:<12} {modified:<12}")
+            row_parts.append(f"{comment_text:<39}")
+
+        print("  " + " ".join(row_parts))
+
     print("  " + "─" * width)
     print()
 
@@ -500,6 +546,9 @@ def build_report_html(
         <th>Estado</th>
         <th>%</th>
         <th>Vence</th>
+        <th>Modificado</th>
+        <th>Checklist</th>
+        <th>Comentarios</th>
       </tr>
     </thead>
     <tbody>""")
@@ -516,6 +565,15 @@ def build_report_html(
         percent = task.get("percentComplete", 0)
         status = _derive_task_status(percent)
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
+        modified = _format_datetime(task.get("lastModifiedDateTime", ""))
+
+        # Checklist: mostrar x/y si total > 0, sino "-"
+        cl_total = task.get("ChecklistTotal", 0)
+        cl_done = task.get("ChecklistDone", 0)
+        checklist_display = f"{cl_done}/{cl_total}" if cl_total > 0 else "-"
+
+        # Comentarios
+        comment_count = task.get("CommentCount", 0)
 
         row_color = _get_task_row_color(task)
 
@@ -526,6 +584,9 @@ def build_report_html(
         <td>{status}</td>
         <td style="text-align: center;">{percent}</td>
         <td>{due}</td>
+        <td>{modified}</td>
+        <td style="text-align: center;">{checklist_display}</td>
+        <td style="text-align: center;">{comment_count}</td>
       </tr>""")
 
     html_parts.append("""    </tbody>
@@ -1518,6 +1579,7 @@ async def run_report(
     filter_text: str = "",
     export_csv: Path | None = None,
     fetch_comments: bool = False,
+    fetch_checklist: bool = False,
 ) -> None:
     """Lista planes con selección interactiva e imprime tareas por plan, opcionalmente exporta a CSV.
 
@@ -1527,6 +1589,7 @@ async def run_report(
         export_csv: Si se especifica, exporta el reporte a CSV con delimitador ';'.
                     No puede apuntar a un archivo .env (ValueError).
         fetch_comments: Si True, obtiene el último comentario por tarea (1 llamada Graph extra por tarea).
+        fetch_checklist: Si True, obtiene el contador de checklist por tarea (1 llamada Graph extra por tarea).
 
     Raises:
         ValueError: Si export_csv contiene '.env' en la ruta.
@@ -1583,6 +1646,28 @@ async def run_report(
 
                 tasks = await list_tasks(client, token, plan_id)
 
+                # Pre-fetch checklist paralelo si se solicita (con semáforo para respetar rate limit)
+                checklist_map: dict[str, tuple[int, int]] = {}  # task_id → (done, total)
+                if fetch_checklist:
+                    sem = asyncio.Semaphore(5)
+
+                    async def _fetch_one_checklist(task_id: str) -> tuple[str, int, int]:
+                        async with sem:
+                            try:
+                                details = await get_task_details(client, token, task_id)
+                                cl = details.get("checklist", {})
+                                total = len(cl)
+                                done = sum(1 for v in cl.values() if v.get("isChecked", False))
+                                await asyncio.sleep(0.1)
+                                return task_id, done, total
+                            except (httpx.HTTPStatusError, httpx.RequestError):
+                                return task_id, 0, 0
+
+                    results = await asyncio.gather(
+                        *[_fetch_one_checklist(t.get("id", "")) for t in tasks]
+                    )
+                    checklist_map = {tid: (done, total) for tid, done, total in results}
+
                 # Enriquecer tareas con comentario si --comments fue solicitado
                 enriched_tasks = []
                 for task in tasks:
@@ -1604,15 +1689,20 @@ async def run_report(
                             # Si falla obtener detalles, continuar sin comentario
                             pass
 
+                    cl_done, cl_total = checklist_map.get(task_id, (0, 0))
+
                     enriched_tasks.append({
                         **task,
                         "LastCommentText": comment["text"],
                         "LastCommentDate": comment["date"],
+                        "CommentCount": task.get("commentCount", 0),
+                        "ChecklistDone": cl_done,
+                        "ChecklistTotal": cl_total,
                         "priority": task.get("priority", 5),
                     })
 
                 # Imprimir tabla para este plan
-                _print_report_table(plan_title, buckets_dict, enriched_tasks, show_comments=fetch_comments)
+                _print_report_table(plan_title, buckets_dict, enriched_tasks, show_comments=fetch_comments, show_checklist=fetch_checklist)
                 _print_kpi_block(plan_title, buckets_dict, enriched_tasks, show_comments=fetch_comments)
 
                 # Preparar filas para exportación
@@ -1634,9 +1724,12 @@ async def run_report(
                         "PercentComplete": task.get("percentComplete", 0),
                         "DueDate": task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "",
                         "CreatedDate": task.get("createdDateTime", "")[:10] if task.get("createdDateTime") else "",
-                        "LastModified": task.get("lastModifiedDateTime", "")[:10] if task.get("lastModifiedDateTime") else "",
+                        "LastModified": _format_datetime(task.get("lastModifiedDateTime", "")),
                         "LastCommentText": task.get("LastCommentText", ""),
                         "LastCommentDate": task.get("LastCommentDate", ""),
+                        "CommentCount": task.get("CommentCount", 0),
+                        "ChecklistDone": task.get("ChecklistDone", 0),
+                        "ChecklistTotal": task.get("ChecklistTotal", 0),
                     }
                     all_rows.append(row)
 
@@ -1667,6 +1760,9 @@ async def run_report(
                         "LastModified",
                         "LastCommentText",
                         "LastCommentDate",
+                        "CommentCount",
+                        "ChecklistDone",
+                        "ChecklistTotal",
                     ],
                     delimiter=";",
                 )
@@ -1682,6 +1778,7 @@ async def run_email_report(
     filter_text: str = "",
     preview: bool = False,
     to_override: str = "",
+    fetch_checklist: bool = False,
 ) -> None:
     """Envía reporte HTML por correo a los asignados de cada plan.
     Completamente separado de run_report() — sin modificar el flujo terminal.
@@ -1691,6 +1788,7 @@ async def run_email_report(
         filter_text: Filtra planes cuyo título lo contenga (case-insensitive). Vacío = sin filtro.
         preview: Si True, guarda HTML en reports/ y abre en navegador. No envía correo.
         to_override: Si no vacío, envía sólo a este email (bypass de asignados).
+        fetch_checklist: Si True, obtiene el contador de checklist por tarea (1 llamada Graph extra por tarea).
     """
     settings = Settings()
     auth = MicrosoftAuthManager(
@@ -1743,11 +1841,39 @@ async def run_email_report(
                     await asyncio.sleep(0.3)
                     continue
 
+                # Pre-fetch checklist paralelo si se solicita (con semáforo para respetar rate limit)
+                checklist_map: dict[str, tuple[int, int]] = {}  # task_id → (done, total)
+                if fetch_checklist:
+                    sem = asyncio.Semaphore(5)
+
+                    async def _fetch_one_checklist(task_id: str) -> tuple[str, int, int]:
+                        async with sem:
+                            try:
+                                details = await get_task_details(client, token, task_id)
+                                cl = details.get("checklist", {})
+                                total = len(cl)
+                                done = sum(1 for v in cl.values() if v.get("isChecked", False))
+                                await asyncio.sleep(0.1)
+                                return task_id, done, total
+                            except (httpx.HTTPStatusError, httpx.RequestError):
+                                return task_id, 0, 0
+
+                    results = await asyncio.gather(
+                        *[_fetch_one_checklist(t.get("id", "")) for t in tasks]
+                    )
+                    checklist_map = {tid: (done, total) for tid, done, total in results}
+
                 # Enriquecer tareas (igual que en run_report)
                 enriched_tasks = []
                 for task in tasks:
+                    task_id = task.get("id", "")
+                    cl_done, cl_total = checklist_map.get(task_id, (0, 0))
+
                     enriched_tasks.append({
                         **task,
+                        "CommentCount": task.get("commentCount", 0),
+                        "ChecklistDone": cl_done,
+                        "ChecklistTotal": cl_total,
                         "priority": task.get("priority", 5),
                     })
 
@@ -1837,6 +1963,10 @@ def main() -> None:
         help="En modo report: obtiene el último comentario por tarea. 1 llamada Graph extra por tarea.",
     )
     parser.add_argument(
+        "--checklist", action="store_true", dest="fetch_checklist",
+        help="report/email-report: muestra contador de checklist (x/y). 1 llamada Graph extra por tarea.",
+    )
+    parser.add_argument(
         "--preview",
         action="store_true",
         help="email-report: guarda HTML en reports/ y abre en navegador. No envía correo.",
@@ -1851,7 +1981,13 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.mode == "report":
-        asyncio.run(run_report(args.group_id, args.filter_text or "", args.export, args.fetch_comments))
+        asyncio.run(run_report(
+            args.group_id,
+            args.filter_text or "",
+            args.export,
+            args.fetch_comments,
+            args.fetch_checklist,
+        ))
         return
 
     if args.mode == "email-report":
@@ -1860,6 +1996,7 @@ def main() -> None:
             args.filter_text or "",
             preview=args.preview,
             to_override=args.to_override,
+            fetch_checklist=args.fetch_checklist,
         ))
         return
 
