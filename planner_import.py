@@ -54,6 +54,8 @@ from src.config import Settings  # noqa: E402
 GROUP_ID = "198b4a0a-39c7-4521-a546-6a008e3a254a"
 # ASSIGNEE_GUID anterior (ahora resuelto dinámicamente desde AssignedToEmail del CSV):
 # ASSIGNEE_GUID = "eed15e14-17d2-46fb-ac5f-d415b6e9db1f"
+# Email del remitente para sendMail (requiere Mail.Send Application permission en Azure AD)
+SENDER_EMAIL = "dmorales@grupoebi.cl"
 CSV_PATH = Path(r"C:\Users\dmorales\OneDrive - Cosemar\PM\Definicion plan control y gestión de proyectos\Docs\Borradores_proyectos_tareas\Planner_Imp_PROJ1.csv")
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SHAREPOINT_SITE_URL = "https://cosemar.sharepoint.com/sites/Gestioncontrolproyectos"
@@ -1087,16 +1089,18 @@ async def send_mail_report(
     to_emails: list[str],
     subject: str,
     html_body: str,
+    sender_upn: str,
 ) -> None:
-    """Envía correo HTML via POST /me/sendMail.
-    Permiso requerido: Mail.Send
+    """Envía correo HTML via POST /users/{sender_upn}/sendMail.
+    Permiso requerido: Mail.Send (Application permission en Azure AD)
 
     Args:
         client: httpx.AsyncClient.
-        token: Access token.
+        token: Access token (app-only, client credentials flow).
         to_emails: Lista de emails de destinatarios.
         subject: Asunto del correo.
         html_body: Cuerpo HTML del correo.
+        sender_upn: Email del remitente (UserPrincipalName o mail attribute).
 
     Raises:
         ValueError: Si to_emails está vacío.
@@ -1116,8 +1120,9 @@ async def send_mail_report(
         "saveToSentItems": True,
     }
 
-    # POST /me/sendMail retorna 202 Accepted (sin body)
-    await graph_request(client, "POST", "/me/sendMail", token, json=payload)
+    # POST /users/{sender_upn}/sendMail retorna 202 Accepted (sin body)
+    # Endpoint acepta app-only tokens con Mail.Send Application permission
+    await graph_request(client, "POST", f"/users/{sender_upn}/sendMail", token, json=payload)
 
 
 async def get_site_id(
@@ -2111,12 +2116,13 @@ async def run_email_report(
                         continue
 
                 # Enviar correo (modo normal o to_override)
-                await send_mail_report(client, token, to_emails, subject, html)
+                await send_mail_report(client, token, to_emails, subject, html, sender_upn=SENDER_EMAIL)
                 print(f"  ✉  {plan_title}: correo enviado a {len(to_emails)} destinatario(s).")
 
                 await asyncio.sleep(0.3)
             except httpx.HTTPStatusError as exc:
-                print(f"  ✗ Error Graph al procesar '{plan_title}': {exc.response.status_code}")
+                body = exc.response.text[:300] if exc.response.text else ""
+                print(f"  ✗ Error Graph al procesar '{plan_title}': {exc.response.status_code} — {body}")
             except httpx.RequestError as exc:
                 print(f"  ✗ Error de red al procesar '{plan_title}': {exc}")
             except ValueError as exc:

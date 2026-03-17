@@ -1299,19 +1299,21 @@ class TestBuildReportHtml:
 
 class TestSendMailReport:
     async def test_calls_sendmail_endpoint(self, fake_token):
-        """graph_request llamado con /me/sendMail."""
+        """graph_request llamado con /users/{sender_upn}/sendMail."""
         client = await _make_client([_make_response(202)])
         await send_mail_report(
-            client, fake_token, ["user@example.com"], "Subject", "<p>Body</p>"
+            client, fake_token, ["user@example.com"], "Subject", "<p>Body</p>",
+            sender_upn="sender@test.com"
         )
         args, kwargs = client.request.call_args
-        assert "/me/sendMail" in args[1]
+        assert "/users/sender@test.com/sendMail" in args[1]
 
     async def test_payload_has_recipients(self, fake_token):
         """Payload contiene toRecipients con los emails."""
         client = await _make_client([_make_response(202)])
         await send_mail_report(
-            client, fake_token, ["user1@example.com", "user2@example.com"], "Subj", "<p>Body</p>"
+            client, fake_token, ["user1@example.com", "user2@example.com"], "Subj", "<p>Body</p>",
+            sender_upn="sender@test.com"
         )
         _, kwargs = client.request.call_args
         payload = kwargs["json"]
@@ -1324,7 +1326,8 @@ class TestSendMailReport:
         """Subject correcto en message.subject."""
         client = await _make_client([_make_response(202)])
         await send_mail_report(
-            client, fake_token, ["user@example.com"], "Mi Asunto", "<p>Body</p>"
+            client, fake_token, ["user@example.com"], "Mi Asunto", "<p>Body</p>",
+            sender_upn="sender@test.com"
         )
         _, kwargs = client.request.call_args
         payload = kwargs["json"]
@@ -1334,7 +1337,8 @@ class TestSendMailReport:
         """Lista vacía lanza ValueError, no llama a Graph."""
         client = await _make_client([])
         with pytest.raises(ValueError, match="to_emails no puede estar vacío"):
-            await send_mail_report(client, fake_token, [], "Subject", "<p>Body</p>")
+            await send_mail_report(client, fake_token, [], "Subject", "<p>Body</p>",
+                                 sender_upn="sender@test.com")
         client.request.assert_not_called()
 
 
