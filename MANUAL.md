@@ -363,6 +363,107 @@ python planner_import.py --mode delete --filter "borrador"
 python planner_import.py --mode delete --filter "borrador" --dry-run
 ```
 
+---
+
+### 3.7 `--mode report`
+
+**Qué hace:** Lista los planes del grupo M365 → permite seleccionar cuáles → imprime tabla de tareas con estado, fechas y última modificación → opcionalmente exporta a CSV con 13 columnas.
+
+**Cuándo usarlo:** Para revisar el estado actual de tareas en múltiples planes, ver cuándo se modificaron por última vez, y obtener un CSV para análisis posterior o integración con herramientas de reportería.
+
+**Llamadas a Graph API:** `1 (GET planes) + N_planes × [1 (GET buckets) + 1 (GET tareas) + N_tareas × 1 (GET comentario si --comments)]`
+
+#### CSV no requerido — lectura únicamente
+
+No necesita archivo CSV para ejecutar. El script consulta directamente los planes existentes en Planner.
+
+#### Comando
+
+```bash
+# Listar planes y seleccionar interactivamente
+python planner_import.py --mode report
+
+# Filtrar planes por título antes de seleccionar
+python planner_import.py --mode report --filter "2026"
+
+# Exportar tabla a CSV
+python planner_import.py --mode report --export reports/reporte.csv
+
+# Incluir último comentario por tarea (solicitud adicional a Graph)
+python planner_import.py --mode report --comments --export reports/reporte_completo.csv
+```
+
+#### Flags
+
+| Flag | Descripción | Ejemplo |
+|------|-------------|---------|
+| `--group-id` | Object ID del grupo M365 cuyos planes se listan (default: hardcodeado en script) | `--group-id 198b4a0a-39c7-4521-a546-6a008e3a254a` |
+| `--filter` | Filtra planes cuyo título lo contenga (insensible a mayúsculas) | `--filter "PRJ"` |
+| `--export` | Exporta el reporte a CSV con delimitador `;` en lugar de solo imprimirlo | `--export C:\data\reporte.csv` |
+| `--comments` | Solicita el último comentario de cada tarea (1 llamada Graph extra por tarea con hilo activo). Por defecto se omite para reducir latencia. | `--comments` |
+
+#### Salida esperada (tabla interactiva)
+
+Paso 1 — Listar y seleccionar:
+
+```
+Planes encontrados: 3
+
+  #    ID                                   Título                                   Creado
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  1    aabbccdd-1234-5678-abcd-000000000001 PMO 2026                                 2026-02-18
+  2    bbccddee-1234-5678-abcd-000000000002 PRJ-2026-001-Cash-Flow                   2026-02-26
+  3    ccddeeaa-1234-5678-abcd-000000000003 Tareas diarias PM - DM                   2026-03-01
+
+  Introduce los números a seleccionar (separados por coma) o 'todos': 1,2
+```
+
+Paso 2 — Imprimir tabla de tareas:
+
+```
+📋 PMO 2026
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Bucket               Título                          Asignado             Estado         %  Vence       Modificado
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Planificación        Definir alcance                 user-id-123          inProgress    25  2026-03-15  2026-03-10
+  Planificación        Reunión de arranque             (sin asignar)        notStarted     0  2026-03-20  2026-03-05
+  Ejecución            Entrega hito 1                  user-id-456          completed    100  2026-04-30  2026-03-12
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+```
+
+Paso 3 — Exportación (si `--export` se especificó):
+
+```
+✓ Reporte exportado a: reports/reporte.csv
+```
+
+#### Columnas del CSV exportado (14 campos)
+
+| Campo | Descripción | Ejemplo |
+|-------|-------------|---------|
+| `PlanID` | ID único del plan en Planner | `aabbccdd-1234-5678-abcd-000000000001` |
+| `PlanTitle` | Título del plan | `PMO 2026` |
+| `BucketID` | ID del bucket dentro del plan | `bbccddee-1234-5678-abcd-000000000002` |
+| `BucketName` | Nombre del bucket | `Planificación` |
+| `TaskID` | ID de la tarea en Planner | `ccddeeaa-1234-5678-abcd-000000000003` |
+| `TaskTitle` | Título de la tarea | `Definir alcance` |
+| `Assignee` | IDs de usuarios asignados (separados por coma) | `user-id-123, user-id-456` |
+| `Status` | Estado derivado de `percentComplete`: `notStarted`, `inProgress`, `completed` | `inProgress` |
+| `PercentComplete` | Porcentaje de avance (0–100) | `25` |
+| `DueDate` | Fecha de vencimiento en `YYYY-MM-DD` | `2026-03-15` |
+| `CreatedDate` | Fecha de creación en `YYYY-MM-DD` | `2026-02-20` |
+| `LastModified` | Última modificación en `YYYY-MM-DD` | `2026-03-10` |
+| `LastCommentText` | Resumen del último comentario (primeros 200 caracteres, HTML limpiado). Vacío si `--comments` no se usó; `"-"` si no hay comentarios. | `Completado el análisis de alcance...` |
+| `LastCommentDate` | Fecha del último comentario en `YYYY-MM-DD`. Vacío si `--comments` no se usó; `"-"` si no hay comentarios. | `2026-03-12` |
+
+#### Advertencias
+
+- **Rendimiento con `--comments`:** Cada tarea con hilo de conversación activo genera 1 llamada adicional a Graph (GET `/groups/{id}/threads/{id}/posts`). Con 100 tareas y todos los hilos activos, serán ~100 llamadas adicionales. Se recomienda usar sin `--comments` para listas grandes y activar solo cuando se necesite auditar actividad reciente.
+- **Campos de comentario vacíos sin flag:** Si `--comments` no se especifica, `LastCommentText` y `LastCommentDate` estarán vacíos en el CSV (para no confundir con la ausencia de comentarios).
+- **Orden de selección:** El script mantiene el orden en que se numeran los planes en la tabla al exportar — no hay reordenamiento.
+
+---
+
 #### Flujo interactivo paso a paso
 
 ```

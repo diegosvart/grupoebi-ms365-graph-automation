@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import csv
 import os
+import re
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -159,18 +160,26 @@ def _print_report_table(
     plan_title: str,
     buckets_dict: dict[str, str],
     tasks: list[dict[str, Any]],
+    show_comments: bool = False,
 ) -> None:
     """Imprime tabla de reporte con tareas agrupadas por bucket.
 
-    Columnas: Bucket | Título | Asignado | Estado | % | Vence
+    Columnas: Bucket | Título | Asignado | Estado | % | Vence | Modificado [| Último comentario]
 
     Nota: el campo Assignee muestra el userId de Azure AD (GUID),
     no el email ni el nombre del usuario.
     """
     print(f"\n📋 {plan_title}")
-    print("  " + "─" * 120)
-    print(f"  {'Bucket':<20} {'Título':<35} {'Asignado':<20} {'Estado':<12} {'%':>3} {'Vence':<12}")
-    print("  " + "─" * 120)
+    if show_comments:
+        width = 181
+    else:
+        width = 134
+    print("  " + "─" * width)
+    if show_comments:
+        print(f"  {'Bucket':<20} {'Título':<35} {'Asignado':<20} {'Estado':<12} {'%':>3} {'Vence':<12} {'Modificado':<12} {'Último comentario':<39}")
+    else:
+        print(f"  {'Bucket':<20} {'Título':<35} {'Asignado':<20} {'Estado':<12} {'%':>3} {'Vence':<12} {'Modificado':<12}")
+    print("  " + "─" * width)
 
     for task in tasks:
         bucket_id = task.get("bucketId", "")
@@ -185,9 +194,14 @@ def _print_report_table(
         status = _derive_task_status(percent)
 
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
+        modified = task.get("lastModifiedDateTime", "")[:10] if task.get("lastModifiedDateTime") else "-"
 
-        print(f"  {bucket_name:<20} {title:<35} {assignee:<20} {status:<12} {percent:>3} {due:<12}")
-    print("  " + "─" * 120)
+        if show_comments:
+            comment_text = task.get("LastCommentText", "")[:38] or "-"
+            print(f"  {bucket_name:<20} {title:<35} {assignee:<20} {status:<12} {percent:>3} {due:<12} {modified:<12} {comment_text:<39}")
+        else:
+            print(f"  {bucket_name:<20} {title:<35} {assignee:<20} {status:<12} {percent:>3} {due:<12} {modified:<12}")
+    print("  " + "─" * width)
     print()
 
 
@@ -439,12 +453,13 @@ async def list_tasks(
     token: str,
     plan_id: str,
 ) -> list[dict[str, Any]]:
-    """GET /planner/plans/{id}/tasks con $select y paginación @odata.nextLink.
-    Selecciona: id, title, bucketId, percentComplete, assignments, dueDateTime, createdDateTime
+    """GET /planner/plans/{id}/tasks con paginación @odata.nextLink.
+    Por defecto, Microsoft Graph devuelve: id, title, bucketId, percentComplete, assignments,
+    dueDateTime, createdDateTime, lastModifiedDateTime. Nota: conversationThreadId no está
+    disponible en este endpoint.
     """
     tasks: list[dict[str, Any]] = []
-    select = "id,title,bucketId,percentComplete,assignments,dueDateTime,createdDateTime"
-    endpoint: str = f"/planner/plans/{plan_id}/tasks?$select={select}"
+    endpoint: str = f"/planner/plans/{plan_id}/tasks"
     while endpoint:
         data = await graph_request(client, "GET", endpoint, token)
         tasks.extend(data.get("value", []))
@@ -462,6 +477,39 @@ async def get_task_details(
     Sin paginación (objeto único).
     """
     return await graph_request(client, "GET", f"/planner/tasks/{task_id}/details", token)
+
+
+async def get_last_comment(
+    client: httpx.AsyncClient,
+    token: str,
+    group_id: str,
+    thread_id: str,
+) -> dict[str, str]:
+    """GET el post más reciente del hilo de conversación de una tarea.
+    Endpoint: GET /groups/{group_id}/threads/{thread_id}/posts
+              ?$top=1&$orderby=receivedDateTime%20desc&$select=body,receivedDateTime
+    Returns {"text": str, "date": "YYYY-MM-DD"} o {"text": "-", "date": "-"} si 404/sin posts.
+    """
+    try:
+        data = await graph_request(
+            client,
+            "GET",
+            f"/groups/{group_id}/threads/{thread_id}/posts"
+            "?$top=1&$orderby=receivedDateTime%20desc&$select=body,receivedDateTime",
+            token,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return {"text": "-", "date": "-"}
+        raise
+    posts = data.get("value", [])
+    if not posts:
+        return {"text": "-", "date": "-"}
+    post = posts[0]
+    raw_html = post.get("body", {}).get("content", "") or ""
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw_html)).strip()[:200] or "-"
+    date_str = (post.get("receivedDateTime") or "")[:10] or "-"
+    return {"text": text, "date": date_str}
 
 
 async def delete_plan(
@@ -1032,6 +1080,7 @@ async def run_report(
     group_id: str,
     filter_text: str = "",
     export_csv: Path | None = None,
+    fetch_comments: bool = False,
 ) -> None:
     """Lista planes con selección interactiva e imprime tareas por plan, opcionalmente exporta a CSV.
 
@@ -1040,6 +1089,7 @@ async def run_report(
         filter_text: Filtra planes cuyo título lo contenga (case-insensitive). Vacío = sin filtro.
         export_csv: Si se especifica, exporta el reporte a CSV con delimitador ';'.
                     No puede apuntar a un archivo .env (ValueError).
+        fetch_comments: Si True, obtiene el último comentario por tarea (1 llamada Graph extra por tarea).
 
     Raises:
         ValueError: Si export_csv contiene '.env' en la ruta.
@@ -1096,11 +1146,34 @@ async def run_report(
 
                 tasks = await list_tasks(client, token, plan_id)
 
+                # Enriquecer tareas con comentario si --comments fue solicitado
+                enriched_tasks = []
+                for task in tasks:
+                    task_id = task.get("id", "")
+                    thread_id = ""
+                    comment = {"text": "", "date": ""}
+
+                    if fetch_comments and task_id:
+                        try:
+                            # Obtener conversationThreadId de /planner/tasks/{id}
+                            task_details = await graph_request(
+                                client, "GET", f"/planner/tasks/{task_id}", token
+                            )
+                            thread_id = task_details.get("conversationThreadId") or ""
+                            if thread_id:
+                                comment = await get_last_comment(client, token, group_id, thread_id)
+                                await asyncio.sleep(0.5)  # rate-limit: threads/posts tiene límite propio
+                        except (httpx.HTTPStatusError, httpx.RequestError):
+                            # Si falla obtener detalles, continuar sin comentario
+                            pass
+
+                    enriched_tasks.append({**task, "LastCommentText": comment["text"], "LastCommentDate": comment["date"]})
+
                 # Imprimir tabla para este plan
-                _print_report_table(plan_title, buckets_dict, tasks)
+                _print_report_table(plan_title, buckets_dict, enriched_tasks, show_comments=fetch_comments)
 
                 # Preparar filas para exportación
-                for task in tasks:
+                for task in enriched_tasks:
                     bucket_id = task.get("bucketId", "")
                     bucket_name = buckets_dict.get(bucket_id, "")
                     assignments = task.get("assignments", {})
@@ -1118,6 +1191,9 @@ async def run_report(
                         "PercentComplete": task.get("percentComplete", 0),
                         "DueDate": task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "",
                         "CreatedDate": task.get("createdDateTime", "")[:10] if task.get("createdDateTime") else "",
+                        "LastModified": task.get("lastModifiedDateTime", "")[:10] if task.get("lastModifiedDateTime") else "",
+                        "LastCommentText": task.get("LastCommentText", ""),
+                        "LastCommentDate": task.get("LastCommentDate", ""),
                     }
                     all_rows.append(row)
 
@@ -1145,6 +1221,9 @@ async def run_report(
                         "PercentComplete",
                         "DueDate",
                         "CreatedDate",
+                        "LastModified",
+                        "LastCommentText",
+                        "LastCommentDate",
                     ],
                     delimiter=";",
                 )
@@ -1186,10 +1265,14 @@ def main() -> None:
         "--export", type=Path, default=None,
         help="CSV de salida para el modo report",
     )
+    parser.add_argument(
+        "--comments", action="store_true", dest="fetch_comments",
+        help="En modo report: obtiene el último comentario por tarea. 1 llamada Graph extra por tarea.",
+    )
     args = parser.parse_args()
 
     if args.mode == "report":
-        asyncio.run(run_report(args.group_id, args.filter_text or "", args.export))
+        asyncio.run(run_report(args.group_id, args.filter_text or "", args.export, args.fetch_comments))
         return
 
     if args.mode == "list":

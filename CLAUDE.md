@@ -16,6 +16,7 @@ Un CSV = un Plan. Un run = crear plan + buckets + tareas (3 llamadas Graph por t
 - `python planner_import.py --mode plan --csv <ruta> --group-id <guid>` — crea solo cabecera de plan
 - `python planner_import.py --mode list [--filter <texto>]` — lista planes del grupo
 - `python planner_import.py --mode delete [--filter <texto>] [--dry-run]` — selección interactiva y borrado
+- `python planner_import.py --mode report [--filter <texto>] [--export <ruta>] [--comments]` — tabla de tareas con estado y fechas; exporta a CSV (14 columnas); `--comments` agrega último comentario (1 llamada Graph extra por tarea con hilo activo)
 
 ## Arquitectura
 - Auth: `MicrosoftAuthManager` + `Settings` importados desde `fornado-planner-mcp/src/`

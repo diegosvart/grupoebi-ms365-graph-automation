@@ -18,6 +18,7 @@ from planner_import import (
     create_plan,
     create_task_full,
     delete_plan,
+    get_last_comment,
     get_task_details,
     graph_request,
     list_buckets,
@@ -482,14 +483,39 @@ class TestListTasks:
         assert "planner/plans" in url
         assert "tasks" in url
 
-    async def test_select_in_query_string(self, fake_token):
+    async def test_endpoint_url_no_select(self, fake_token):
+        """URL no incluye $select (Microsoft Graph devuelve campos por defecto)."""
         client = await _make_client([_make_response(200, {"value": []})])
         await list_tasks(client, fake_token, "plan-123")
         args, _ = client.request.call_args
         url: str = args[1]
-        assert "$select=" in url
-        assert "percentComplete" in url
-        assert "assignments" in url
+        assert "$select" not in url
+
+    async def test_returns_default_fields(self, fake_token):
+        """Respuesta contiene campos devueltos por defecto: id, title, lastModifiedDateTime."""
+        response_data = {
+            "value": [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "bucketId": "b1",
+                    "percentComplete": 50,
+                    "lastModifiedDateTime": "2026-03-15T00:00:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert len(result) == 1
+        assert result[0]["id"] == "t1"
+        assert result[0]["lastModifiedDateTime"] == "2026-03-15T00:00:00Z"
+
+    async def test_conversation_thread_not_in_response(self, fake_token):
+        """conversationThreadId NO está disponible en este endpoint."""
+        response_data = {"value": [{"id": "t1", "title": "Task"}]}
+        client = await _make_client([_make_response(200, response_data)])
+        result = await list_tasks(client, fake_token, "plan-123")
+        assert "conversationThreadId" not in result[0]
 
 
 # ── _derive_task_status ────────────────────────────────────────────────────────
@@ -630,6 +656,42 @@ class TestPrintReportTable:
         captured = capsys.readouterr()
         assert plan_title in captured.out
 
+    def test_modified_column_appears(self, capsys):
+        """Columna 'Modificado' aparece en la salida."""
+        tasks = [
+            {
+                "title": "Tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        assert "Modificado" in captured.out
+        assert "2026-03-10" in captured.out
+
+    def test_task_without_last_modified_shows_dash(self, capsys):
+        """lastModifiedDateTime ausente → imprime '-'."""
+        tasks = [
+            {
+                "title": "Tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
+        captured = capsys.readouterr()
+        # Debe haber un dash en la columna Modificado
+        lines = [l for l in captured.out.split("\n") if "Tarea" in l]
+        assert len(lines) > 0
+        # Verificar que hay un dash en el campo de fecha modificada
+        assert "-" in captured.out
+
 
 # ── run_report ────────────────────────────────────────────────────────────────
 
@@ -753,3 +815,253 @@ class TestRunReport:
                     captured = capsys.readouterr()
                     assert "2026-Q1" in captured.out
                     assert "Viejo 2025" not in captured.out
+
+
+# ── get_last_comment (B2) ──────────────────────────────────────────────────────
+
+class TestGetLastComment:
+    async def test_returns_text_and_date(self, fake_token):
+        """Respuesta 200 con posts → devuelve dict con text y date."""
+        from planner_import import get_last_comment
+
+        response_data = {
+            "value": [
+                {
+                    "body": {"content": "<div>Último comentario de la tarea</div>"},
+                    "receivedDateTime": "2026-03-15T10:30:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert isinstance(result, dict)
+        assert "text" in result
+        assert "date" in result
+        assert "Último comentario" in result["text"]
+        assert "2026-03-15" in result["date"]
+
+    async def test_strips_html_tags(self, fake_token):
+        """HTML tags se eliminan, solo queda el contenido de texto."""
+        from planner_import import get_last_comment
+
+        response_data = {
+            "value": [
+                {
+                    "body": {
+                        "content": "<div><p>Clean <strong>text</strong> only</p></div>"
+                    },
+                    "receivedDateTime": "2026-03-15T10:30:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert "<" not in result["text"]
+        assert ">" not in result["text"]
+        assert "Clean" in result["text"]
+        assert "text" in result["text"]
+
+    async def test_truncates_to_200(self, fake_token):
+        """Texto mayor a 200 caracteres se trunca."""
+        from planner_import import get_last_comment
+
+        long_text = "A" * 250
+        response_data = {
+            "value": [
+                {
+                    "body": {"content": f"<div>{long_text}</div>"},
+                    "receivedDateTime": "2026-03-15T10:30:00Z",
+                }
+            ]
+        }
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert len(result["text"]) <= 200
+
+    async def test_no_posts_returns_dashes(self, fake_token):
+        """value: [] (sin posts) → devuelve {'-', '-'}."""
+        from planner_import import get_last_comment
+
+        response_data = {"value": []}
+        client = await _make_client([_make_response(200, response_data)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert result == {"text": "-", "date": "-"}
+
+    async def test_404_returns_dashes(self, fake_token):
+        """404 → se absorbe silenciosamente, devuelve {'-', '-'}."""
+        from planner_import import get_last_comment
+
+        client = await _make_client([_make_response(404)])
+        result = await get_last_comment(client, fake_token, "group-id", "thread-id")
+        assert result == {"text": "-", "date": "-"}
+
+    async def test_non_404_propagates(self, fake_token):
+        """500 u otro error → se propaga (no se absorbe)."""
+        from planner_import import get_last_comment
+
+        client = await _make_client([_make_response(500)])
+        with pytest.raises(httpx.HTTPStatusError):
+            await get_last_comment(client, fake_token, "group-id", "thread-id")
+
+
+# ── _print_report_table con comentarios (B2) ──────────────────────────────────
+
+class TestPrintReportTableComments:
+    def test_show_comments_shows_column(self, capsys):
+        """show_comments=True → columna 'Último comentario' aparece."""
+        tasks = [
+            {
+                "title": "Tarea con comentario",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+                "LastCommentText": "Este es un comentario",
+                "LastCommentDate": "2026-03-14",
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        assert "Último comentario" in captured.out
+        assert "Este es un comentario" in captured.out
+
+    def test_no_comments_hides_column(self, capsys):
+        """show_comments=False (default) → columna 'Último comentario' NO aparece."""
+        tasks = [
+            {
+                "title": "Tarea sin comentario",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks, show_comments=False)
+        captured = capsys.readouterr()
+        assert "Último comentario" not in captured.out
+
+    def test_comment_text_truncated_to_38(self, capsys):
+        """Texto de comentario > 38 chars se trunca en display."""
+        long_comment = "A" * 50
+        tasks = [
+            {
+                "title": "Tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "lastModifiedDateTime": "2026-03-10T15:30:00Z",
+                "LastCommentText": long_comment,
+                "LastCommentDate": "2026-03-14",
+            }
+        ]
+        buckets_dict = {"b1": "Backlog"}
+        planner_import._print_report_table("Plan Test", buckets_dict, tasks, show_comments=True)
+        captured = capsys.readouterr()
+        # Se trunca en [:38] en la línea de print, así que máximo 38 A's pueden aparecer consecutivos
+        assert "A" * 38 in captured.out
+        assert "A" * 50 not in captured.out
+
+
+# ── run_report con comentarios (B2) ────────────────────────────────────────────
+
+class TestRunReportComments:
+    async def test_comments_flag_calls_get_last_comment(self, mock_auth, monkeypatch):
+        """Con fetch_comments=True, se llama get_last_comment para cada tarea con hilo."""
+        plans = [{"id": "p1", "title": "Plan 1"}]
+        buckets = [{"id": "b1", "name": "Backlog"}]
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Task 1",
+                "bucketId": "b1",
+                "assignments": {},
+                "percentComplete": 0,
+            },
+            {
+                "id": "t2",
+                "title": "Task 2",
+                "bucketId": "b1",
+                "assignments": {},
+                "percentComplete": 0,
+            }
+        ]
+        task_details_responses = [
+            {"conversationThreadId": "thread-123"},
+            {"conversationThreadId": "thread-456"},
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    with patch.object(planner_import, "get_last_comment", new_callable=AsyncMock) as mock_comment:
+                        with patch.object(planner_import, "graph_request", new_callable=AsyncMock) as mock_graph:
+                            mock_list.return_value = plans
+                            mock_buckets.return_value = buckets
+                            mock_tasks.return_value = tasks
+                            mock_graph.side_effect = task_details_responses
+                            mock_comment.return_value = {"text": "Comment", "date": "2026-03-14"}
+                            monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                            await planner_import.run_report("group-id", fetch_comments=True)
+
+                            assert mock_comment.call_count == 2
+
+    async def test_no_comments_flag_skips_calls(self, mock_auth, monkeypatch):
+        """Sin fetch_comments (default), get_last_comment NO se llama."""
+        plans = [{"id": "p1", "title": "Plan 1"}]
+        buckets = [{"id": "b1", "name": "Backlog"}]
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Task 1",
+                "bucketId": "b1",
+                "assignments": {},
+                "percentComplete": 0,
+            }
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    with patch.object(planner_import, "get_last_comment", new_callable=AsyncMock) as mock_comment:
+                        mock_list.return_value = plans
+                        mock_buckets.return_value = buckets
+                        mock_tasks.return_value = tasks
+                        monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                        await planner_import.run_report("group-id", fetch_comments=False)
+
+                        mock_comment.assert_not_called()
+
+    async def test_csv_includes_all_comment_columns(self, mock_auth, monkeypatch, tmp_path):
+        """CSV siempre incluye LastCommentText y LastCommentDate, incluso sin --comments."""
+        csv_path = tmp_path / "test_report.csv"
+        plans = [{"id": "p1", "title": "Plan 1"}]
+        buckets = [{"id": "b1", "name": "Backlog"}]
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Task 1",
+                "bucketId": "b1",
+                "conversationThreadId": "thread-123",
+                "assignments": {"user-1": {}},
+                "percentComplete": 50,
+                "dueDateTime": "2026-03-30T00:00:00Z",
+                "createdDateTime": "2026-03-01T00:00:00Z",
+                "lastModifiedDateTime": "2026-03-10T00:00:00Z",
+            }
+        ]
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
+            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
+                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
+                    mock_list.return_value = plans
+                    mock_buckets.return_value = buckets
+                    mock_tasks.return_value = tasks
+                    monkeypatch.setattr("builtins.input", lambda _: "1")
+
+                    await planner_import.run_report("group-id", export_csv=csv_path, fetch_comments=False)
+
+                    assert csv_path.exists()
+                    content = csv_path.read_text(encoding="utf-8")
+                    assert "LastCommentText" in content
+                    assert "LastCommentDate" in content
