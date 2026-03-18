@@ -717,7 +717,8 @@ def build_report_html(
     for task in sorted_tasks:
         bucket_id = task.get("bucketId", "")
         bucket_name = buckets_dict.get(bucket_id, "?")
-        title = task.get("title", "")[:50]
+        raw_title = task.get("title", "")
+        title = raw_title[:50] + "…" if len(raw_title) > 50 else raw_title
 
         # Extraer asignados — usar AssigneeDisplay si está disponible
         assignee = task.get("AssigneeDisplay", "(sin asignar)")
@@ -735,6 +736,8 @@ def build_report_html(
         if cl_total > 0:
             checklist_pct = int(cl_done / cl_total * 100)
             pct_display = f"{checklist_pct}%"
+        elif percent > 0:
+            pct_display = f"{percent}%"
         else:
             pct_display = "-"
 
@@ -924,6 +927,8 @@ async def graph_request(
         if resp.status_code == 204:
             return None
         resp.raise_for_status()
+        if not resp.content:   # 202 (sendMail) y otros 2xx con body vacío
+            return None
         return resp.json()
 
     raise RuntimeError(f"Máximo de reintentos para {method} {endpoint}")
@@ -2055,7 +2060,9 @@ async def run_email_report(
                     assignee_names = [
                         names_map.get(g, g[:12]) for g in assignments.keys()
                     ]
-                    assignee_display = ", ".join(assignee_names)[:40] if assignee_names else "(sin asignar)"
+                    # Truncar apellidos: primer nombre + inicial del apellido para nombres largos
+                    short_names = [n.split()[0] + " " + n.split()[-1] if len(n) > 20 else n for n in assignee_names]
+                    assignee_display = ", ".join(short_names) if short_names else "(sin asignar)"
 
                     enriched_tasks.append({
                         **task,

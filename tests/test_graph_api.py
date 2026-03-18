@@ -73,6 +73,14 @@ class TestGraphRequestBasic:
         result = await graph_request(client, "DELETE", "/planner/plans/x", fake_token)
         assert result is None
 
+    async def test_202_empty_body_returns_none(self, fake_token):
+        """POST que retorna 202 con body vacío (ej: sendMail) debe retornar None sin error."""
+        resp = _make_response(202)
+        resp.content = b""  # simula body vacío
+        client = await _make_client([resp])
+        result = await graph_request(client, "POST", "/users/x@test.com/sendMail", fake_token)
+        assert result is None
+
     async def test_etag_adds_if_match_header(self, fake_token):
         client = await _make_client([_make_response(200, {})])
         await graph_request(
@@ -1934,8 +1942,8 @@ class TestPercentColumnWithChecklist:
         # La columna % debe mostrar "60%" (3/5)
         assert "60%" in html, "Columna % no muestra ratio de checklist"
 
-    def test_percent_column_shows_dash_without_checklist(self):
-        """Tarea sin checklist (ChecklistTotal=0) → columna % muestra '-'."""
+    def test_percent_column_shows_percent_without_checklist(self):
+        """Tarea sin checklist pero con percentComplete → columna % muestra percentComplete."""
         tasks = [
             {
                 "id": "task1",
@@ -1953,10 +1961,33 @@ class TestPercentColumnWithChecklist:
         ]
         buckets_dict = {"bucket1": "Backlog"}
         html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-        # Verificar que hay un "-" en la celda de %
-        # Buscar la fila con la tarea
+        # Verificar que la columna % muestra percentComplete (50%)
         assert "Task without Checklist" in html
-        # La columna % debe mostrar "-"
+        # La columna % debe mostrar "50%" porque percentComplete=50
+        assert "<td style=\"text-align: center;\">50%</td>" in html
+
+    def test_percent_column_shows_dash_without_checklist_without_percent(self):
+        """Tarea sin checklist y sin percentComplete → columna % muestra '-'."""
+        tasks = [
+            {
+                "id": "task2",
+                "title": "Task Zero Progress",
+                "bucketId": "bucket1",
+                "percentComplete": 0,
+                "assignments": {},
+                "dueDateTime": None,
+                "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
+                "CommentCount": 0,
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
+        # Verificar que la columna % muestra "-" para 0% sin checklist
+        assert "Task Zero Progress" in html
+        # La columna % debe mostrar "-" porque percentComplete=0 y sin checklist
         assert "<td style=\"text-align: center;\">-</td>" in html
 
 
