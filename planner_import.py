@@ -1919,7 +1919,7 @@ async def run_email_report(
     filter_text: str = "",
     preview: bool = False,
     to_override: str = "",
-    fetch_checklist: bool = False,
+    fetch_checklist: bool = True,
 ) -> None:
     """Envía reporte HTML por correo a los asignados de cada plan.
     Completamente separado de run_report() — sin modificar el flujo terminal.
@@ -2172,8 +2172,8 @@ def main() -> None:
         help="En modo report: obtiene el último comentario por tarea. 1 llamada Graph extra por tarea.",
     )
     parser.add_argument(
-        "--checklist", action="store_true", dest="fetch_checklist",
-        help="report/email-report: muestra contador de checklist (x/y). 1 llamada Graph extra por tarea.",
+        "--no-checklist", action="store_false", dest="fetch_checklist",
+        help="report/email-report: desactiva obtención de checklist (más rápido con >100 tareas).",
     )
     parser.add_argument(
         "--preview",

@@ -81,6 +81,7 @@ python planner_import.py --mode email-report \
 | `--to` | email | ✗ | `user@example.com` | Obligatorio si NO `--preview` |
 | `--preview` | bool | ✗ | (flag) | Genera HTML sin enviar |
 | `--comments` | bool | ✗ | (flag) | Agrega último comentario por tarea |
+| `--no-checklist` | bool | ✗ | (flag) | Desactiva obtención de checklist (más rápido con >100 tareas) |
 
 ---
 

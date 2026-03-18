@@ -1382,7 +1382,7 @@ class TestRunEmailReport:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id")
+            await run_email_report("group-id", fetch_checklist=False)
             # send_mail_report debe haber sido llamado 1 vez (solo el plan seleccionado)
             assert mock_send.call_count == 1
 
@@ -1409,7 +1409,7 @@ class TestRunEmailReport:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id")
+            await run_email_report("group-id", fetch_checklist=False)
             # send_mail_report NO debe ser llamado
             mock_send.assert_not_called()
 
@@ -1426,7 +1426,7 @@ class TestRunEmailReport:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", filter_text="Project A")
+            await run_email_report("group-id", filter_text="Project A", fetch_checklist=False)
             # list_plans debe llamarse, pero el filtro se aplica en memoria
             assert mock_list_plans.call_count == 1
 
@@ -1455,7 +1455,7 @@ class TestRunEmailReportPreview:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", preview=True)
+            await run_email_report("group-id", preview=True, fetch_checklist=False)
             # Debe haberse creado el archivo
             mock_write.assert_called_once()
             args, kwargs = mock_write.call_args
@@ -1484,7 +1484,7 @@ class TestRunEmailReportPreview:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", preview=True)
+            await run_email_report("group-id", preview=True, fetch_checklist=False)
             # send_mail_report NO debe ser llamado
             mock_send.assert_not_called()
 
@@ -1509,7 +1509,7 @@ class TestRunEmailReportPreview:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", preview=True)
+            await run_email_report("group-id", preview=True, fetch_checklist=False)
             # webbrowser.open debe ser llamado una vez
             mock_browser.assert_called_once()
             call_args = mock_browser.call_args[0][0]
@@ -1547,7 +1547,7 @@ class TestRunEmailReportTo:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", to_override="dmorales@grupoebi.cl")
+            await run_email_report("group-id", to_override="dmorales@grupoebi.cl", fetch_checklist=False)
 
             # send_mail_report debe ser llamado con [to_override]
             mock_send.assert_called_once()
@@ -1583,7 +1583,7 @@ class TestRunEmailReportTo:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", to_override="pm@example.com")
+            await run_email_report("group-id", to_override="pm@example.com", fetch_checklist=False)
 
             # resolve_guid_to_email NO debe ser llamado
             mock_resolve.assert_not_called()
@@ -1591,6 +1591,35 @@ class TestRunEmailReportTo:
             mock_send.assert_called_once()
             call_args = mock_send.call_args
             assert call_args[0][2] == ["pm@example.com"]
+
+
+class TestRunEmailReportChecklistDefault:
+    """fetch_checklist=True debe ser el default — get_task_details siempre se llama."""
+
+    async def test_checklist_fetched_by_default(self, fake_token):
+        """Sin pasar fetch_checklist, run_email_report llama get_task_details por cada tarea."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock), \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_plans.return_value = [{"id": "p1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1",
+                 "assignments": {"guid1": {}}, "percentComplete": 0}
+            ]
+            mock_details.return_value = {"checklist": {}}  # sin ítems, pero se llamó
+
+            from planner_import import run_email_report
+            await run_email_report("group-id")   # sin pasar fetch_checklist explícito
+
+            # get_task_details debe haberse llamado una vez (fetch_checklist=True es el default)
+            mock_details.assert_called_once()
 
 
 # ── Nuevos tests para _format_datetime, CommentCount, Checklist ─────────────────
