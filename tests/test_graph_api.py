@@ -2353,8 +2353,7 @@ class TestOutlookFallback:
         """Verifica que segmentos con count=0 no se emitan en la barra."""
         result = planner_import._build_outlook_bar_fallback(5, 3, 0, 0, 8)
         # Contar celdas <td> en la barra (deberían ser 2, no 4)
-        bar_part = result.split("</table>")[0]  # obtener solo la tabla de barra
-        td_count = bar_part.count("<td")
+        td_count = result.count("<td")
         assert td_count == 2, f"Se esperaban 2 celdas (5+3), pero se encontraron {td_count}"
 
     def test_outlook_fallback_total_zero_shows_gray_bar(self):
@@ -2362,7 +2361,6 @@ class TestOutlookFallback:
         result = planner_import._build_outlook_bar_fallback(0, 0, 0, 0, 0)
         assert "Sin datos" in result, "Texto 'Sin datos' no encontrado para total=0"
         assert "#f3f2f1" in result, "Color gris de fondo no encontrado"
-        assert "Completado: 0%" in result, "% completado no encontrado"
 
     def test_outlook_fallback_bar_widths_sum_to_100(self):
         """Verifica que los anchos de las celdas sumen exactamente 100%."""
@@ -2371,14 +2369,17 @@ class TestOutlookFallback:
         import re
         widths = re.findall(r'width="(\d+)%"', result)
         # Deberían haber 4 celdas con 25% cada una
-        assert len(widths) >= 4, f"Se esperaban al menos 4 celdas, se encontraron {len(widths)}"
-        bar_widths = [int(w) for w in widths[:4]]
+        assert len(widths) == 4, f"Se esperaban 4 celdas, se encontraron {len(widths)}"
+        bar_widths = [int(w) for w in widths]
         assert sum(bar_widths) == 100, f"Los anchos no suman 100: {bar_widths}"
 
-    def test_outlook_fallback_shows_pct_completado(self):
-        """Verifica que el % completado aparezca correctamente en la leyenda."""
+    def test_outlook_fallback_returns_only_bar_no_legend(self):
+        """Verifica que el fallback NO incluye leyenda (proporcionada por build_report_html)."""
         result = planner_import._build_outlook_bar_fallback(20, 10, 5, 5, 40)
-        assert "Completado: 50%" in result, "% completado (50%) no encontrado"
+        # NO debe contener "Completado:" (que era parte de la leyenda removida)
+        assert "Completado:" not in result, "Fallback no debe incluir leyenda"
+        # Pero SÍ debe tener la barra de colores
+        assert "<table" in result, "Fallback debe contener tabla de barra"
 
     def test_conditional_comments_correctly_nested(self):
         """Verifica que los conditional comments estén correctamente anidados."""
@@ -2386,5 +2387,5 @@ class TestOutlookFallback:
         # El SVG debe estar DENTRO de <!--[if !mso]><!--> ... <!--<![endif]-->
         # El fallback debe estar DENTRO de <!--[if mso]> ... <![endif]-->
         assert result.index("<!--[if !mso]><!-->") < result.index("<svg"), "SVG no está dentro del conditional !mso"
-        assert result.index("<!--[if mso]>") < result.index("Completada"), "Fallback no está dentro del conditional mso"
+        assert result.index("<!--[if mso]>") < result.index("<table"), "Fallback no está dentro del conditional mso"
         assert result.rindex("<![endif]-->") > result.rindex("</table>"), "Cierre no está después del fallback"

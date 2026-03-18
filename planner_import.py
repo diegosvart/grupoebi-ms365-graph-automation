@@ -236,6 +236,7 @@ def _build_outlook_bar_fallback(
     completadas: int, en_progreso: int, sin_iniciar: int, vencidas: int, total: int
 ) -> str:
     """Fallback HTML tabla-barra para Outlook (no renderiza SVG inline).
+    Retorna SOLO la barra de progreso. La leyenda es proporcionada por build_report_html.
     Todo inline styles. Sin border-radius ni CSS classes."""
     if total == 0:
         return (
@@ -245,8 +246,6 @@ def _build_outlook_bar_fallback(
             ' style="background-color:#f3f2f1; font-size:10px; color:#666;'
             ' text-align:center; vertical-align:middle; width:150px; height:24px;">'
             'Sin datos</td></tr></table>'
-            '<p style="font-size:11px; color:#666; margin:6px 0 0 0; text-align:center;">'
-            'Completado: 0%</p>'
         )
 
     segments = [
@@ -269,24 +268,11 @@ def _build_outlook_bar_fallback(
                 f' style="background-color:{color}; width:{w}%; height:24px;"></td>'
             )
 
-    pct = int(completadas / total * 100)
-    legend = (
-        '<table width="150" cellspacing="0" cellpadding="2" border="0"'
-        ' style="width:150px; margin-top:6px; font-size:11px;">'
-        '<tr>'
-        f'<td style="padding:2px 4px;"><span style="color:#107c10; font-weight:bold;">&#9632;</span> Completadas: {completadas}</td>'
-        f'<td style="padding:2px 4px;"><span style="color:#ff8c00; font-weight:bold;">&#9632;</span> En Progreso: {en_progreso}</td>'
-        '</tr><tr>'
-        f'<td style="padding:2px 4px;"><span style="color:#8a8886; font-weight:bold;">&#9632;</span> Sin Iniciar: {sin_iniciar}</td>'
-        f'<td style="padding:2px 4px;"><span style="color:#d13438; font-weight:bold;">&#9632;</span> Vencidas: {vencidas}</td>'
-        '</tr></table>'
-        f'<p style="font-size:13px; font-weight:bold; color:#333; margin:6px 0 0 0; text-align:center;">Completado: {pct}%</p>'
-    )
     bar_table = (
         '<table width="150" cellspacing="0" cellpadding="0" border="0" style="width:150px;">'
         f'<tr>{bar_cells}</tr></table>'
     )
-    return bar_table + legend
+    return bar_table
 
 
 def _build_donut_svg(
