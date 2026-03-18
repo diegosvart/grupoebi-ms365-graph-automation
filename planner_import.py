@@ -232,36 +232,107 @@ def _checklist_badge(done: int, total: int) -> str:
     return f'<span style="background-color:{bg}; color:{color}; padding:2px 6px; border-radius:3px;">{done}/{total}</span>'
 
 
+def _build_outlook_bar_fallback(
+    completadas: int, en_progreso: int, sin_iniciar: int, vencidas: int, total: int
+) -> str:
+    """Fallback HTML tabla-barra para Outlook (no renderiza SVG inline).
+    Todo inline styles. Sin border-radius ni CSS classes."""
+    if total == 0:
+        return (
+            '<table width="150" cellspacing="0" cellpadding="0" border="0"'
+            ' style="width:150px;">'
+            '<tr><td width="150" height="24"'
+            ' style="background-color:#f3f2f1; font-size:10px; color:#666;'
+            ' text-align:center; vertical-align:middle; width:150px; height:24px;">'
+            'Sin datos</td></tr></table>'
+            '<p style="font-size:11px; color:#666; margin:6px 0 0 0; text-align:center;">'
+            'Completado: 0%</p>'
+        )
+
+    segments = [
+        (completadas, "#107c10", "Completadas"),
+        (en_progreso, "#ff8c00", "En Progreso"),
+        (sin_iniciar, "#8a8886", "Sin Iniciar"),
+        (vencidas, "#d13438", "Vencidas"),
+    ]
+    widths = [int(count / total * 100) for count, _, _ in segments]
+    diff = 100 - sum(widths)
+    if diff != 0:
+        max_idx = widths.index(max(widths))
+        widths[max_idx] += diff
+
+    bar_cells = ""
+    for (count, color, _label), w in zip(segments, widths):
+        if w > 0:
+            bar_cells += (
+                f'<td width="{w}%" height="24"'
+                f' style="background-color:{color}; width:{w}%; height:24px;"></td>'
+            )
+
+    pct = int(completadas / total * 100)
+    legend = (
+        '<table width="150" cellspacing="0" cellpadding="2" border="0"'
+        ' style="width:150px; margin-top:6px; font-size:11px;">'
+        '<tr>'
+        f'<td style="padding:2px 4px;"><span style="color:#107c10; font-weight:bold;">&#9632;</span> Completadas: {completadas}</td>'
+        f'<td style="padding:2px 4px;"><span style="color:#ff8c00; font-weight:bold;">&#9632;</span> En Progreso: {en_progreso}</td>'
+        '</tr><tr>'
+        f'<td style="padding:2px 4px;"><span style="color:#8a8886; font-weight:bold;">&#9632;</span> Sin Iniciar: {sin_iniciar}</td>'
+        f'<td style="padding:2px 4px;"><span style="color:#d13438; font-weight:bold;">&#9632;</span> Vencidas: {vencidas}</td>'
+        '</tr></table>'
+        f'<p style="font-size:13px; font-weight:bold; color:#333; margin:6px 0 0 0; text-align:center;">Completado: {pct}%</p>'
+    )
+    bar_table = (
+        '<table width="150" cellspacing="0" cellpadding="0" border="0" style="width:150px;">'
+        f'<tr>{bar_cells}</tr></table>'
+    )
+    return bar_table + legend
+
+
 def _build_donut_svg(
     completadas: int, en_progreso: int, sin_iniciar: int, vencidas: int, total: int
 ) -> str:
-    """Genera SVG donut chart 150×150 con circunferencia 251.33 px (radio 40px). Fix 4.3: tamaño ampliado."""
-    if total == 0:
-        return '<svg width="150" height="150" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f3f2f1"/></svg>'
+    """Genera SVG donut chart con fallback HTML para Outlook.
 
-    circ = 251.33
-    segments = [
-        (completadas, "#107c10"),  # verde
-        (en_progreso, "#ff8c00"),  # naranja
-        (sin_iniciar, "#8a8886"),  # gris
-        (vencidas, "#d13438"),  # rojo
-    ]
-    paths = []
-    offset = 0.0
-    for count, color in segments:
-        dash = count / total * circ
-        paths.append(
-            f'<circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="18" '
-            f'stroke-dasharray="{dash:.1f} {circ - dash:.1f}" '
-            f'stroke-dashoffset="-{offset:.1f}" transform="rotate(-90 50 50)"/>'
-        )
-        offset += dash
-    pct = f"{int(completadas / total * 100)}%"
-    legend_svg = f'''<svg width="150" height="150" viewBox="0 0 100 100">
+    - Clientes modernos (Gmail, Apple Mail, OWA): ven el SVG.
+    - Outlook Windows (motor Word): ve barra de progreso HTML puro.
+    """
+    if total == 0:
+        svg_block = '<svg width="150" height="150" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f3f2f1"/></svg>'
+    else:
+        circ = 251.33
+        segments = [
+            (completadas, "#107c10"),  # verde
+            (en_progreso, "#ff8c00"),  # naranja
+            (sin_iniciar, "#8a8886"),  # gris
+            (vencidas, "#d13438"),  # rojo
+        ]
+        paths = []
+        offset = 0.0
+        for count, color in segments:
+            dash = count / total * circ
+            paths.append(
+                f'<circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="18" '
+                f'stroke-dasharray="{dash:.1f} {circ - dash:.1f}" '
+                f'stroke-dashoffset="-{offset:.1f}" transform="rotate(-90 50 50)"/>'
+            )
+            offset += dash
+        pct = f"{int(completadas / total * 100)}%"
+        svg_block = f'''<svg width="150" height="150" viewBox="0 0 100 100">
     {"".join(paths)}
     <text x="50" y="55" text-anchor="middle" font-size="20" font-weight="bold" fill="#333">{pct}</text>
   </svg>'''
-    return legend_svg
+
+    fallback = _build_outlook_bar_fallback(completadas, en_progreso, sin_iniciar, vencidas, total)
+
+    return (
+        "<!--[if !mso]><!-->\n"
+        f"  {svg_block}\n"
+        "<!--<![endif]-->\n"
+        "<!--[if mso]>\n"
+        f"  {fallback}\n"
+        "<![endif]-->"
+    )
 
 
 def _print_report_table(
