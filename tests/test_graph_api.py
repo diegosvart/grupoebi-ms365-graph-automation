@@ -3,6 +3,7 @@ resolve_email_to_guid, create_task_full, get_task_details, _print_report_table,
 run_report — sin red real."""
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -70,6 +71,14 @@ class TestGraphRequestBasic:
     async def test_204_returns_none(self, fake_token):
         client = await _make_client([_make_response(204)])
         result = await graph_request(client, "DELETE", "/planner/plans/x", fake_token)
+        assert result is None
+
+    async def test_202_empty_body_returns_none(self, fake_token):
+        """POST que retorna 202 con body vacío (ej: sendMail) debe retornar None sin error."""
+        resp = _make_response(202)
+        resp.content = b""  # simula body vacío
+        client = await _make_client([resp])
+        result = await graph_request(client, "POST", "/users/x@test.com/sendMail", fake_token)
         assert result is None
 
     async def test_etag_adds_if_match_header(self, fake_token):
@@ -663,41 +672,6 @@ class TestPrintReportTable:
         captured = capsys.readouterr()
         assert plan_title in captured.out
 
-    def test_modified_column_appears(self, capsys):
-        """Columna 'Modificado' aparece en la salida."""
-        tasks = [
-            {
-                "title": "Tarea",
-                "bucketId": "b1",
-                "percentComplete": 0,
-                "assignments": {},
-                "createdDateTime": "2026-03-10T15:30:00Z",
-            }
-        ]
-        buckets_dict = {"b1": "Backlog"}
-        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
-        captured = capsys.readouterr()
-        assert "Modificado" in captured.out
-        assert "10-03-2026" in captured.out
-
-    def test_task_without_last_modified_shows_dash(self, capsys):
-        """lastModifiedDateTime ausente → imprime '-'."""
-        tasks = [
-            {
-                "title": "Tarea",
-                "bucketId": "b1",
-                "percentComplete": 0,
-                "assignments": {},
-            }
-        ]
-        buckets_dict = {"b1": "Backlog"}
-        planner_import._print_report_table("Plan Test", buckets_dict, tasks)
-        captured = capsys.readouterr()
-        # Debe haber un dash en la columna Modificado
-        lines = [l for l in captured.out.split("\n") if "Tarea" in l]
-        assert len(lines) > 0
-        # Verificar que hay un dash en el campo de fecha modificada
-        assert "-" in captured.out
 
 
 # ── run_report ────────────────────────────────────────────────────────────────
@@ -1040,39 +1014,6 @@ class TestRunReportComments:
 
                         mock_comment.assert_not_called()
 
-    async def test_csv_includes_all_comment_columns(self, mock_auth, monkeypatch, tmp_path):
-        """CSV siempre incluye LastCommentText y LastCommentDate, incluso sin --comments."""
-        csv_path = tmp_path / "test_report.csv"
-        plans = [{"id": "p1", "title": "Plan 1"}]
-        buckets = [{"id": "b1", "name": "Backlog"}]
-        tasks = [
-            {
-                "id": "t1",
-                "title": "Task 1",
-                "bucketId": "b1",
-                "conversationThreadId": "thread-123",
-                "assignments": {"user-1": {}},
-                "percentComplete": 50,
-                "dueDateTime": "2026-03-30T00:00:00Z",
-                "createdDateTime": "2026-03-01T00:00:00Z",
-                "lastModifiedDateTime": "2026-03-10T00:00:00Z",
-            }
-        ]
-        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_list:
-            with patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets:
-                with patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks:
-                    mock_list.return_value = plans
-                    mock_buckets.return_value = buckets
-                    mock_tasks.return_value = tasks
-                    monkeypatch.setattr("builtins.input", lambda _: "1")
-
-                    await planner_import.run_report("group-id", export_csv=csv_path, fetch_comments=False)
-
-                    assert csv_path.exists()
-                    content = csv_path.read_text(encoding="utf-8")
-                    assert "LastCommentText" in content
-                    assert "LastCommentDate" in content
-
 
 class TestPrintKpiBlock:
     """Tests para _print_kpi_block — 14 tests."""
@@ -1366,19 +1307,21 @@ class TestBuildReportHtml:
 
 class TestSendMailReport:
     async def test_calls_sendmail_endpoint(self, fake_token):
-        """graph_request llamado con /me/sendMail."""
+        """graph_request llamado con /users/{sender_upn}/sendMail."""
         client = await _make_client([_make_response(202)])
         await send_mail_report(
-            client, fake_token, ["user@example.com"], "Subject", "<p>Body</p>"
+            client, fake_token, ["user@example.com"], "Subject", "<p>Body</p>",
+            sender_upn="sender@test.com"
         )
         args, kwargs = client.request.call_args
-        assert "/me/sendMail" in args[1]
+        assert "/users/sender@test.com/sendMail" in args[1]
 
     async def test_payload_has_recipients(self, fake_token):
         """Payload contiene toRecipients con los emails."""
         client = await _make_client([_make_response(202)])
         await send_mail_report(
-            client, fake_token, ["user1@example.com", "user2@example.com"], "Subj", "<p>Body</p>"
+            client, fake_token, ["user1@example.com", "user2@example.com"], "Subj", "<p>Body</p>",
+            sender_upn="sender@test.com"
         )
         _, kwargs = client.request.call_args
         payload = kwargs["json"]
@@ -1391,7 +1334,8 @@ class TestSendMailReport:
         """Subject correcto en message.subject."""
         client = await _make_client([_make_response(202)])
         await send_mail_report(
-            client, fake_token, ["user@example.com"], "Mi Asunto", "<p>Body</p>"
+            client, fake_token, ["user@example.com"], "Mi Asunto", "<p>Body</p>",
+            sender_upn="sender@test.com"
         )
         _, kwargs = client.request.call_args
         payload = kwargs["json"]
@@ -1401,7 +1345,8 @@ class TestSendMailReport:
         """Lista vacía lanza ValueError, no llama a Graph."""
         client = await _make_client([])
         with pytest.raises(ValueError, match="to_emails no puede estar vacío"):
-            await send_mail_report(client, fake_token, [], "Subject", "<p>Body</p>")
+            await send_mail_report(client, fake_token, [], "Subject", "<p>Body</p>",
+                                 sender_upn="sender@test.com")
         client.request.assert_not_called()
 
 
@@ -1437,7 +1382,7 @@ class TestRunEmailReport:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id")
+            await run_email_report("group-id", fetch_checklist=False)
             # send_mail_report debe haber sido llamado 1 vez (solo el plan seleccionado)
             assert mock_send.call_count == 1
 
@@ -1464,7 +1409,7 @@ class TestRunEmailReport:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id")
+            await run_email_report("group-id", fetch_checklist=False)
             # send_mail_report NO debe ser llamado
             mock_send.assert_not_called()
 
@@ -1481,7 +1426,7 @@ class TestRunEmailReport:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", filter_text="Project A")
+            await run_email_report("group-id", filter_text="Project A", fetch_checklist=False)
             # list_plans debe llamarse, pero el filtro se aplica en memoria
             assert mock_list_plans.call_count == 1
 
@@ -1510,7 +1455,7 @@ class TestRunEmailReportPreview:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", preview=True)
+            await run_email_report("group-id", preview=True, fetch_checklist=False)
             # Debe haberse creado el archivo
             mock_write.assert_called_once()
             args, kwargs = mock_write.call_args
@@ -1539,7 +1484,7 @@ class TestRunEmailReportPreview:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", preview=True)
+            await run_email_report("group-id", preview=True, fetch_checklist=False)
             # send_mail_report NO debe ser llamado
             mock_send.assert_not_called()
 
@@ -1564,7 +1509,7 @@ class TestRunEmailReportPreview:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", preview=True)
+            await run_email_report("group-id", preview=True, fetch_checklist=False)
             # webbrowser.open debe ser llamado una vez
             mock_browser.assert_called_once()
             call_args = mock_browser.call_args[0][0]
@@ -1602,7 +1547,7 @@ class TestRunEmailReportTo:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", to_override="dmorales@grupoebi.cl")
+            await run_email_report("group-id", to_override="dmorales@grupoebi.cl", fetch_checklist=False)
 
             # send_mail_report debe ser llamado con [to_override]
             mock_send.assert_called_once()
@@ -1638,7 +1583,7 @@ class TestRunEmailReportTo:
 
             from planner_import import run_email_report
 
-            await run_email_report("group-id", to_override="pm@example.com")
+            await run_email_report("group-id", to_override="pm@example.com", fetch_checklist=False)
 
             # resolve_guid_to_email NO debe ser llamado
             mock_resolve.assert_not_called()
@@ -1646,6 +1591,35 @@ class TestRunEmailReportTo:
             mock_send.assert_called_once()
             call_args = mock_send.call_args
             assert call_args[0][2] == ["pm@example.com"]
+
+
+class TestRunEmailReportChecklistDefault:
+    """fetch_checklist=True debe ser el default — get_task_details siempre se llama."""
+
+    async def test_checklist_fetched_by_default(self, fake_token):
+        """Sin pasar fetch_checklist, run_email_report llama get_task_details por cada tarea."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock_plans, \
+             patch.object(planner_import, "list_buckets", new_callable=AsyncMock) as mock_buckets, \
+             patch.object(planner_import, "list_tasks", new_callable=AsyncMock) as mock_tasks, \
+             patch.object(planner_import, "get_task_details", new_callable=AsyncMock) as mock_details, \
+             patch.object(planner_import, "send_mail_report", new_callable=AsyncMock), \
+             patch.object(planner_import, "_print_plans_table"), \
+             patch("builtins.print"), \
+             patch("builtins.input", return_value="1"):
+
+            mock_plans.return_value = [{"id": "p1", "title": "Plan"}]
+            mock_buckets.return_value = [{"id": "b1", "name": "Backlog"}]
+            mock_tasks.return_value = [
+                {"id": "t1", "title": "Task", "bucketId": "b1",
+                 "assignments": {"guid1": {}}, "percentComplete": 0}
+            ]
+            mock_details.return_value = {"checklist": {}}  # sin ítems, pero se llamó
+
+            from planner_import import run_email_report
+            await run_email_report("group-id")   # sin pasar fetch_checklist explícito
+
+            # get_task_details debe haberse llamado una vez (fetch_checklist=True es el default)
+            mock_details.assert_called_once()
 
 
 # ── Nuevos tests para _format_datetime, CommentCount, Checklist ─────────────────
@@ -1969,33 +1943,6 @@ class TestBuildReportHtmlBucketOrder:
 class TestBuildReportHtmlCreatedColumn:
     """Test para verificar columna 'Creado' en HTML."""
 
-    def test_created_column_visible(self):
-        """Columna 'Creado' está en el HTML con fecha válida."""
-        tasks = [
-            {
-                "id": "task1",
-                "title": "Test Task",
-                "bucketId": "bucket1",
-                "percentComplete": 50,
-                "assignments": {},
-                "dueDateTime": None,
-                "createdDateTime": "2026-01-15T10:30:00Z",
-                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
-                "CommentCount": 0,
-                "ChecklistDone": 0,
-                "ChecklistTotal": 0,
-            }
-        ]
-        buckets_dict = {"bucket1": "Backlog"}
-
-        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-
-        # Verificar que el header tiene "Creado"
-        assert "<th>Creado</th>" in html, "Columna 'Creado' no está en el header"
-
-        # Verificar que la fecha aparece en la tabla (formato dd-mm-yyyy)
-        assert "15-01-2026" in html, "Fecha de creación no aparece en el HTML"
-
 
 # ── Fixes Round 2: Tests para columnas %, Modificado, y colores ─────────────────
 
@@ -2024,8 +1971,8 @@ class TestPercentColumnWithChecklist:
         # La columna % debe mostrar "60%" (3/5)
         assert "60%" in html, "Columna % no muestra ratio de checklist"
 
-    def test_percent_column_shows_dash_without_checklist(self):
-        """Tarea sin checklist (ChecklistTotal=0) → columna % muestra '-'."""
+    def test_percent_column_shows_percent_without_checklist(self):
+        """Tarea sin checklist pero con percentComplete → columna % muestra percentComplete."""
         tasks = [
             {
                 "id": "task1",
@@ -2043,27 +1990,23 @@ class TestPercentColumnWithChecklist:
         ]
         buckets_dict = {"bucket1": "Backlog"}
         html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-        # Verificar que hay un "-" en la celda de %
-        # Buscar la fila con la tarea
+        # Verificar que la columna % muestra percentComplete (50%)
         assert "Task without Checklist" in html
-        # La columna % debe mostrar "-"
-        assert "<td style=\"text-align: center;\">-</td>" in html
+        # La columna % debe mostrar "50%" porque percentComplete=50
+        assert "<td style=\"text-align: center;\">50%</td>" in html
 
-
-class TestModifiedColumnTruncated:
-    """Fix 2: Columna 'Modificado' truncada a solo fecha (dd-mm-yyyy)."""
-
-    def test_modified_column_shows_date_only(self):
-        """createdDateTime truncado a solo dd-mm-yyyy (sin hora)."""
+    def test_percent_column_shows_dash_without_checklist_without_percent(self):
+        """Tarea sin checklist y sin percentComplete → columna % muestra '-'."""
         tasks = [
             {
-                "id": "task1",
-                "title": "Test Task",
+                "id": "task2",
+                "title": "Task Zero Progress",
                 "bucketId": "bucket1",
-                "percentComplete": 50,
+                "percentComplete": 0,
                 "assignments": {},
                 "dueDateTime": None,
                 "createdDateTime": "2026-01-15T10:30:00Z",
+                "lastModifiedDateTime": "2026-01-15T10:30:00Z",
                 "CommentCount": 0,
                 "ChecklistDone": 0,
                 "ChecklistTotal": 0,
@@ -2071,8 +2014,12 @@ class TestModifiedColumnTruncated:
         ]
         buckets_dict = {"bucket1": "Backlog"}
         html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026")
-        # Debe estar "15-01-2026" (sin hora) en la columna Modificado
-        assert "15-01-2026" in html, "Fecha de creación no aparece correctamente"
+        # Verificar que la columna % muestra "-" para 0% sin checklist
+        assert "Task Zero Progress" in html
+        # La columna % debe mostrar "-" porque percentComplete=0 y sin checklist
+        assert "<td style=\"text-align: center;\">-</td>" in html
+
+
 
 
 class TestTaskRowColors:
@@ -2304,3 +2251,74 @@ class TestLayoutKPI50Plus50:
         assert "Diego Morales" in html, "Nombre de autor 'Diego Morales' no encontrado en footer"
         assert "Project Manager 2026" in html, "Título 'Project Manager 2026' no encontrado"
         assert "automatización de procesos" in html, "Descripción de automatización no encontrada"
+
+
+class TestKPIProximas7Dias:
+    """Tests para el nuevo KPI 'Próximas a vencer en 7 días'."""
+
+    def test_kpi_proximas_a_vencer_appears_in_html(self):
+        """El stat card 'Vencen en 7 días' aparece en el HTML con el count correcto."""
+        today = date.today()
+        # Tarea que vence en 3 días, sin completar
+        tarea_en_ventana = {
+            "id": "task1",
+            "bucketId": "bucket1",
+            "title": "Tarea que vence pronto",
+            "percentComplete": 50,
+            "dueDateTime": (today + timedelta(days=3)).isoformat() + "T00:00:00Z",
+            "assignments": {},
+            "ChecklistDone": 0,
+            "ChecklistTotal": 0,
+        }
+        # Tarea que vence en 10 días, sin completar (fuera de ventana de 7 días)
+        tarea_fuera_ventana = {
+            "id": "task2",
+            "bucketId": "bucket1",
+            "title": "Tarea que vence lejos",
+            "percentComplete": 50,
+            "dueDateTime": (today + timedelta(days=10)).isoformat() + "T00:00:00Z",
+            "assignments": {},
+            "ChecklistDone": 0,
+            "ChecklistTotal": 0,
+        }
+        # Tarea completada que vence en 2 días (no cuenta porque está completada)
+        tarea_completada = {
+            "id": "task3",
+            "bucketId": "bucket1",
+            "title": "Tarea completada pronto",
+            "percentComplete": 100,
+            "dueDateTime": (today + timedelta(days=2)).isoformat() + "T00:00:00Z",
+            "assignments": {},
+            "ChecklistDone": 0,
+            "ChecklistTotal": 0,
+        }
+        tasks = [tarea_en_ventana, tarea_fuera_ventana, tarea_completada]
+        buckets_dict = {"bucket1": "Backlog"}
+
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026", proximas_7d=1)
+
+        # Verificar que el stat card contiene el número correcto y el texto
+        assert "Vencen en 7 días" in html, "Texto 'Vencen en 7 días' no encontrado en HTML"
+        assert ">1</span>" in html or ">1<" in html, "Número 1 no encontrado para próximas a vencer"
+
+    def test_kpi_proximas_a_vencer_zero_when_none(self):
+        """El stat card muestra 0 cuando no hay tareas próximas a vencer."""
+        tasks = [
+            {
+                "id": "task1",
+                "bucketId": "bucket1",
+                "title": "Tarea lejana",
+                "percentComplete": 50,
+                "dueDateTime": (date.today() + timedelta(days=15)).isoformat() + "T00:00:00Z",
+                "assignments": {},
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        buckets_dict = {"bucket1": "Backlog"}
+
+        html = planner_import.build_report_html("Test Plan", buckets_dict, tasks, "15-01-2026", proximas_7d=0)
+
+        # Verificar que el stat card contiene 0
+        assert "Vencen en 7 días" in html, "Texto 'Vencen en 7 días' no encontrado"
+        assert ">0</span>" in html or ">0<" in html, "Número 0 no encontrado para próximas a vencer"

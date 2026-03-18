@@ -54,6 +54,8 @@ from src.config import Settings  # noqa: E402
 GROUP_ID = "198b4a0a-39c7-4521-a546-6a008e3a254a"
 # ASSIGNEE_GUID anterior (ahora resuelto dinámicamente desde AssignedToEmail del CSV):
 # ASSIGNEE_GUID = "eed15e14-17d2-46fb-ac5f-d415b6e9db1f"
+# Email del remitente para sendMail (requiere Mail.Send Application permission en Azure AD)
+SENDER_EMAIL = "dmorales@grupoebi.cl"
 CSV_PATH = Path(r"C:\Users\dmorales\OneDrive - Cosemar\PM\Definicion plan control y gestión de proyectos\Docs\Borradores_proyectos_tareas\Planner_Imp_PROJ1.csv")
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SHAREPOINT_SITE_URL = "https://cosemar.sharepoint.com/sites/Gestioncontrolproyectos"
@@ -271,14 +273,14 @@ def _print_report_table(
 ) -> None:
     """Imprime tabla de reporte con tareas agrupadas por bucket.
 
-    Columnas: Bucket | Título | Asignado | Estado | % | Vence | Modificado | Coment. [| Checklist] [| Último comentario]
+    Columnas: Bucket | Título | Asignado | Estado | % | Vence [| Checklist] [| Último comentario]
 
     Nota: el campo Assignee muestra el userId de Azure AD (GUID),
     no el email ni el nombre del usuario.
     """
     print(f"\n📋 {plan_title}")
-    # Calculando ancho: 20+35+20+12+3+12+16+7 = 125 base + checklist 8 + comentario 39
-    base_width = 20 + 35 + 20 + 12 + 3 + 12 + 16 + 7  # 125
+    # Calculando ancho: 20+35+20+12+3+12 = 102 base + checklist 8 + comentario 39
+    base_width = 20 + 35 + 20 + 12 + 3 + 12  # 102
     checklist_width = 8 if show_checklist else 0
     comments_width = 39 if show_comments else 0
     width = base_width + checklist_width + comments_width
@@ -291,8 +293,6 @@ def _print_report_table(
         f"{'Estado':<12}",
         f"{'%':>3}",
         f"{'Vence':<12}",
-        f"{'Modificado':<16}",
-        f"{'Coment.':<7}",
     ]
     if show_checklist:
         header_parts.append(f"{'Checklist':<8}")
@@ -315,8 +315,6 @@ def _print_report_table(
         status = _derive_task_status(percent)
 
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified = _format_datetime(task.get("createdDateTime", ""))
-        comment_count = task.get("CommentCount", 0)
 
         # Checklist: mostrar x/y si show_checklist, sino "-"
         cl_total = task.get("ChecklistTotal", 0)
@@ -331,8 +329,6 @@ def _print_report_table(
             f"{status:<12}",
             f"{percent:>3}",
             f"{due:<12}",
-            f"{modified:<16}",
-            f"{comment_count:<7}",
         ]
         if show_checklist:
             row_parts.append(f"{checklist_display:<8}")
@@ -520,6 +516,7 @@ def build_report_html(
     buckets_dict: dict[str, str],
     tasks: list[dict[str, Any]],
     report_date: str,
+    proximas_7d: int = 0,
 ) -> str:
     """Genera HTML con tabla de tareas y bloque de KPIs. Estilos inline (compatibilidad Outlook).
 
@@ -528,6 +525,7 @@ def build_report_html(
         buckets_dict: {bucketId: bucketName}.
         tasks: Lista de tareas enriquecidas (con assignments, percentComplete, dueDateTime, etc).
         report_date: Fecha del reporte en formato DD-MM-YYYY.
+        proximas_7d: Cantidad de tareas que vencen en los próximos 7 días. Default: 0.
 
     Returns:
         HTML como string.
@@ -566,21 +564,6 @@ def build_report_html(
             bucket_signals[bucket_id]["sin_iniciar"] += 1
         if _parse_due(task) and _parse_due(task) < today and pct < 100:
             bucket_signals[bucket_id]["vencidas"] += 1
-
-    # Determinar señales por bucket
-    def _get_bucket_signal(bucket_id: str) -> tuple[str, str]:
-        """Retorna (emoji, color_bg) para un bucket."""
-        if bucket_id not in bucket_signals:
-            return ("🔵", "#d1ecf1")  # PENDIENTE
-        sig = bucket_signals[bucket_id]
-        if sig["vencidas"] > 0:
-            return ("⛔", "#ffd6d6")  # GATEWAY (rojo)
-        elif sig["sin_iniciar"] > sig["completadas"]:
-            return ("⚠ ", "#fff3cd")  # CUELLO (amarillo)
-        elif sig["completadas"] == sig["total"]:
-            return ("✅", "#d4edda")  # FLUYE (verde)
-        else:
-            return ("🔵", "#d1ecf1")  # PENDIENTE (azul)
 
     # Función para determinar color de fila de tarea (Fix 4.3: colores vibrantes alineados con chart)
     def _get_task_row_color(task: dict[str, Any]) -> str:
@@ -695,6 +678,16 @@ def build_report_html(
     </tr>
   </table>
 
+  <!-- Próximas a vencer en 7 días -->
+  <table width="100%" cellspacing="0" cellpadding="0" style="margin-top: 12px;">
+    <tr>
+      <td style="border-left:4px solid #ff8c00; background:#fff4e0; padding:8px 10px; border-radius:4px;">
+        <span style="font-size:20px; font-weight:bold; color:#8c5000;">{proximas_7d}</span>
+        <span style="font-size:11px; color:#8c5000; margin-left:6px;">Vencen en 7 días</span>
+      </td>
+    </tr>
+  </table>
+
   <h3>📋 Tareas por Bucket</h3>
   <table>
     <thead>
@@ -704,11 +697,8 @@ def build_report_html(
         <th>Asignado</th>
         <th>Estado</th>
         <th>%</th>
-        <th>Creado</th>
         <th>Vence</th>
-        <th>Modificado</th>
         <th>Checklist</th>
-        <th>Comentarios</th>
       </tr>
     </thead>
     <tbody>""")
@@ -727,34 +717,29 @@ def build_report_html(
     for task in sorted_tasks:
         bucket_id = task.get("bucketId", "")
         bucket_name = buckets_dict.get(bucket_id, "?")
-        title = task.get("title", "")[:50]
+        raw_title = task.get("title", "")
+        title = raw_title[:50] + "…" if len(raw_title) > 50 else raw_title
 
         # Extraer asignados — usar AssigneeDisplay si está disponible
         assignee = task.get("AssigneeDisplay", "(sin asignar)")
 
         percent = task.get("percentComplete", 0)
         status_badge = _status_badge(percent)
-        created = _format_datetime(task.get("createdDateTime", ""))
-        created_short = created[:10] if created != "-" else "-"
         due = task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "-"
-        modified_full = _format_datetime(task.get("createdDateTime", ""))
-        # Fix 2: truncar "Modificado" a solo fecha (dd-mm-yyyy)
-        modified = modified_full[:10] if modified_full != "-" else "-"
 
         # Checklist badge coloreado
         cl_total = task.get("ChecklistTotal", 0)
         cl_done = task.get("ChecklistDone", 0)
         checklist_badge_html = _checklist_badge(cl_done, cl_total)
 
-        # Fix 1: Columna % muestra ratio de checklist si está disponible, sino percentComplete
+        # Columna % muestra ratio de checklist si está disponible, sino percentComplete
         if cl_total > 0:
             checklist_pct = int(cl_done / cl_total * 100)
             pct_display = f"{checklist_pct}%"
+        elif percent > 0:
+            pct_display = f"{percent}%"
         else:
             pct_display = "-"
-
-        # Comentarios
-        comment_count = task.get("CommentCount", 0)
 
         row_color = _get_task_row_color(task)
 
@@ -764,40 +749,12 @@ def build_report_html(
         <td>{assignee}</td>
         <td>{status_badge}</td>
         <td style="text-align: center;">{pct_display}</td>
-        <td>{created_short}</td>
         <td>{due}</td>
-        <td>{modified}</td>
         <td style="text-align: center;">{checklist_badge_html}</td>
-        <td style="text-align: center;">{comment_count}</td>
       </tr>""")
 
     html_parts.append("""    </tbody>
   </table>
-
-  <h3>🎯 Señal por Bucket</h3>
-  <table class="kpi-table">
-    <tr>
-      <th>Bucket</th>
-      <th>Señal</th>
-      <th>Total</th>
-      <th>Completadas</th>
-      <th>En Progreso</th>
-      <th>Sin Iniciar</th>
-    </tr>""")
-
-    for bucket_id, bucket_name in buckets_dict.items():
-        emoji, color = _get_bucket_signal(bucket_id)
-        sig = bucket_signals.get(bucket_id, {"total": 0, "completadas": 0, "en_progreso": 0, "sin_iniciar": 0})
-        html_parts.append(f"""    <tr>
-      <td>{bucket_name}</td>
-      <td style="background-color: {color}; text-align: center;">{emoji}</td>
-      <td style="text-align: center;">{sig['total']}</td>
-      <td style="text-align: center;">{sig['completadas']}</td>
-      <td style="text-align: center;">{sig['en_progreso']}</td>
-      <td style="text-align: center;">{sig['sin_iniciar']}</td>
-    </tr>""")
-
-    html_parts.append("""  </table>
 
   <div class="footer">
     <p>Generado por automatización de procesos · Creado y desarrollado por Diego Morales - Project Manager 2026 · Gestión de proyectos e iniciativas: {total}</p>
@@ -970,6 +927,8 @@ async def graph_request(
         if resp.status_code == 204:
             return None
         resp.raise_for_status()
+        if not resp.content:   # 202 (sendMail) y otros 2xx con body vacío
+            return None
         return resp.json()
 
     raise RuntimeError(f"Máximo de reintentos para {method} {endpoint}")
@@ -1135,16 +1094,18 @@ async def send_mail_report(
     to_emails: list[str],
     subject: str,
     html_body: str,
+    sender_upn: str,
 ) -> None:
-    """Envía correo HTML via POST /me/sendMail.
-    Permiso requerido: Mail.Send
+    """Envía correo HTML via POST /users/{sender_upn}/sendMail.
+    Permiso requerido: Mail.Send (Application permission en Azure AD)
 
     Args:
         client: httpx.AsyncClient.
-        token: Access token.
+        token: Access token (app-only, client credentials flow).
         to_emails: Lista de emails de destinatarios.
         subject: Asunto del correo.
         html_body: Cuerpo HTML del correo.
+        sender_upn: Email del remitente (UserPrincipalName o mail attribute).
 
     Raises:
         ValueError: Si to_emails está vacío.
@@ -1164,8 +1125,9 @@ async def send_mail_report(
         "saveToSentItems": True,
     }
 
-    # POST /me/sendMail retorna 202 Accepted (sin body)
-    await graph_request(client, "POST", "/me/sendMail", token, json=payload)
+    # POST /users/{sender_upn}/sendMail retorna 202 Accepted (sin body)
+    # Endpoint acepta app-only tokens con Mail.Send Application permission
+    await graph_request(client, "POST", f"/users/{sender_upn}/sendMail", token, json=payload)
 
 
 async def get_site_id(
@@ -1911,10 +1873,6 @@ async def run_report(
                         "PercentComplete": task.get("percentComplete", 0),
                         "DueDate": task.get("dueDateTime", "")[:10] if task.get("dueDateTime") else "",
                         "CreatedDate": task.get("createdDateTime", "")[:10] if task.get("createdDateTime") else "",
-                        "LastModified": _format_datetime(task.get("createdDateTime", "")),
-                        "LastCommentText": task.get("LastCommentText", ""),
-                        "LastCommentDate": task.get("LastCommentDate", ""),
-                        "CommentCount": task.get("CommentCount", 0),
                         "ChecklistDone": task.get("ChecklistDone", 0),
                         "ChecklistTotal": task.get("ChecklistTotal", 0),
                     }
@@ -1944,10 +1902,6 @@ async def run_report(
                         "PercentComplete",
                         "DueDate",
                         "CreatedDate",
-                        "LastModified",
-                        "LastCommentText",
-                        "LastCommentDate",
-                        "CommentCount",
                         "ChecklistDone",
                         "ChecklistTotal",
                     ],
@@ -1965,7 +1919,7 @@ async def run_email_report(
     filter_text: str = "",
     preview: bool = False,
     to_override: str = "",
-    fetch_checklist: bool = False,
+    fetch_checklist: bool = True,
 ) -> None:
     """Envía reporte HTML por correo a los asignados de cada plan.
     Completamente separado de run_report() — sin modificar el flujo terminal.
@@ -2106,7 +2060,9 @@ async def run_email_report(
                     assignee_names = [
                         names_map.get(g, g[:12]) for g in assignments.keys()
                     ]
-                    assignee_display = ", ".join(assignee_names)[:40] if assignee_names else "(sin asignar)"
+                    # Truncar apellidos: primer nombre + inicial del apellido para nombres largos
+                    short_names = [n.split()[0] + " " + n.split()[-1] if len(n) > 20 else n for n in assignee_names]
+                    assignee_display = ", ".join(short_names) if short_names else "(sin asignar)"
 
                     enriched_tasks.append({
                         **task,
@@ -2119,7 +2075,19 @@ async def run_email_report(
 
                 # Generar HTML (para preview o envío)
                 report_date = date.today().strftime("%d-%m-%Y")
-                html = build_report_html(plan_title, buckets_dict, enriched_tasks, report_date)
+
+                # Calcular tareas que vencen en los próximos 7 días
+                today = date.today()
+                proximas_7d = sum(
+                    1 for t in enriched_tasks
+                    if t.get("dueDateTime")
+                    and t.get("percentComplete", 0) < 100
+                    and today <= datetime.fromisoformat(
+                        t["dueDateTime"].replace("Z", "+00:00")
+                    ).date() <= today + timedelta(days=7)
+                )
+
+                html = build_report_html(plan_title, buckets_dict, enriched_tasks, report_date, proximas_7d)
                 subject = f"[Planner] Reporte de gestión — {plan_title} ({report_date})"
 
                 # Preview mode: guardar HTML y abrir en navegador (sin enviar correo)
@@ -2155,12 +2123,13 @@ async def run_email_report(
                         continue
 
                 # Enviar correo (modo normal o to_override)
-                await send_mail_report(client, token, to_emails, subject, html)
+                await send_mail_report(client, token, to_emails, subject, html, sender_upn=SENDER_EMAIL)
                 print(f"  ✉  {plan_title}: correo enviado a {len(to_emails)} destinatario(s).")
 
                 await asyncio.sleep(0.3)
             except httpx.HTTPStatusError as exc:
-                print(f"  ✗ Error Graph al procesar '{plan_title}': {exc.response.status_code}")
+                body = exc.response.text[:300] if exc.response.text else ""
+                print(f"  ✗ Error Graph al procesar '{plan_title}': {exc.response.status_code} — {body}")
             except httpx.RequestError as exc:
                 print(f"  ✗ Error de red al procesar '{plan_title}': {exc}")
             except ValueError as exc:
@@ -2203,8 +2172,8 @@ def main() -> None:
         help="En modo report: obtiene el último comentario por tarea. 1 llamada Graph extra por tarea.",
     )
     parser.add_argument(
-        "--checklist", action="store_true", dest="fetch_checklist",
-        help="report/email-report: muestra contador de checklist (x/y). 1 llamada Graph extra por tarea.",
+        "--no-checklist", action="store_false", dest="fetch_checklist",
+        help="report/email-report: desactiva obtención de checklist (más rápido con >100 tareas).",
     )
     parser.add_argument(
         "--preview",
