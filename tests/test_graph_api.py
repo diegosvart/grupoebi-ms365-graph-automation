@@ -2416,3 +2416,47 @@ class TestAssigneeDisplayLogic:
         assignee_names = []
         result = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
         assert result == "(sin asignar)"
+
+
+class TestTaskTitleLink:
+    """Verifica que el título de cada tarea incluye un deep-link a Planner."""
+
+    def test_task_title_has_link_when_id_present(self):
+        """Con task_id presente, el HTML incluye href a tasks.office.com."""
+        tasks = [
+            {
+                "id": "abc123",
+                "title": "Mi tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "AssigneeDisplay": "(sin asignar)",
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        html = planner_import.build_report_html(
+            "Plan", {"b1": "Bucket"}, tasks, "2026-03-19"
+        )
+        assert 'href="https://tasks.office.com/Home/Task/abc123"' in html
+        assert 'target="_blank"' in html
+
+    def test_task_title_plain_text_when_no_id(self):
+        """Sin task_id, el título se muestra como texto plano (sin <a>)."""
+        tasks = [
+            {
+                "id": "",
+                "title": "Mi tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "AssigneeDisplay": "(sin asignar)",
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        html = planner_import.build_report_html(
+            "Plan", {"b1": "Bucket"}, tasks, "2026-03-19"
+        )
+        assert "tasks.office.com" not in html
+        assert "Mi tarea" in html

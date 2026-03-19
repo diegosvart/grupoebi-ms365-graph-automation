@@ -665,6 +665,8 @@ def build_report_html(
     .legend-item {{ font-size: 11px; margin: 4px 0; }}
     .legend-dot {{ display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }}
     .footer {{ margin-top: 20px; padding: 10px; font-size: 11px; color: #999; border-top: 1px solid #ddd; }}
+    td a {{ color: #0078d4; text-decoration: none; }}
+    td a:hover {{ text-decoration: underline; }}
   </style>
 </head>
 <body>
@@ -776,6 +778,7 @@ def build_report_html(
         bucket_name = buckets_dict.get(bucket_id, "?")
         raw_title = task.get("title", "")
         title = raw_title[:50] + "…" if len(raw_title) > 50 else raw_title
+        task_id = task.get("id", "")
 
         # Extraer asignados — usar AssigneeDisplay si está disponible
         assignee = task.get("AssigneeDisplay", "(sin asignar)")
@@ -800,9 +803,12 @@ def build_report_html(
 
         row_color = _get_task_row_color(task)
 
+        # Construir celda de título con link a Planner si task_id existe
+        title_cell = f'<a href="https://tasks.office.com/Home/Task/{task_id}" target="_blank">{title}</a>' if task_id else title
+
         html_parts.append(f"""      <tr style="background-color: {row_color};">
         <td>{bucket_name}</td>
-        <td>{title}</td>
+        <td>{title_cell}</td>
         <td>{assignee}</td>
         <td>{status_badge}</td>
         <td style="text-align: center;">{pct_display}</td>
