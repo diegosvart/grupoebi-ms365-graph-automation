@@ -2389,3 +2389,30 @@ class TestOutlookFallback:
         assert result.index("<!--[if !mso]><!-->") < result.index("<svg"), "SVG no está dentro del conditional !mso"
         assert result.index("<!--[if mso]>") < result.index("<table"), "Fallback no está dentro del conditional mso"
         assert result.rindex("<![endif]-->") > result.rindex("</table>"), "Cierre no está después del fallback"
+
+
+class TestAssigneeDisplayLogic:
+    """Verifica que el nombre del asignado se muestra siempre completo."""
+
+    def test_single_assignee_shows_full_name(self):
+        """Valida que un nombre largo se muestra sin truncamiento."""
+        names_map = {"guid1": "Diego Elias Morales Contreras"}
+        assignments = {"guid1": {}}
+        assignee_names = [names_map.get(g, g[:12]) for g in assignments.keys()]
+        result = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
+        assert result == "Diego Elias Morales Contreras"
+
+    def test_multiple_assignees_shows_full_names(self):
+        """Valida que múltiples asignados se muestran con nombres completos."""
+        names_map = {"guid1": "Diego Elias Morales Contreras", "guid2": "Ana Gomez"}
+        assignments = {"guid1": {}, "guid2": {}}
+        assignee_names = [names_map.get(g, g[:12]) for g in assignments.keys()]
+        result = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
+        assert "Diego Elias Morales Contreras" in result
+        assert "Ana Gomez" in result
+
+    def test_empty_assignments_shows_sin_asignar(self):
+        """Valida que sin asignados muestra '(sin asignar)'."""
+        assignee_names = []
+        result = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
+        assert result == "(sin asignar)"

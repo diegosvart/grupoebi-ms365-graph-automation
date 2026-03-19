@@ -2117,9 +2117,7 @@ async def run_email_report(
                     assignee_names = [
                         names_map.get(g, g[:12]) for g in assignments.keys()
                     ]
-                    # Truncar apellidos: primer nombre + inicial del apellido para nombres largos
-                    short_names = [n.split()[0] + " " + n.split()[-1] if len(n) > 20 else n for n in assignee_names]
-                    assignee_display = ", ".join(short_names) if short_names else "(sin asignar)"
+                    assignee_display = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
 
                     enriched_tasks.append({
                         **task,
