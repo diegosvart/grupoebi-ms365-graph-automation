@@ -52,6 +52,9 @@ from src.config import Settings  # noqa: E402
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 GROUP_ID = "198b4a0a-39c7-4521-a546-6a008e3a254a"
+# Lista de grupos: configurable con PLANNER_GROUP_IDS en .env (coma-separados)
+_raw_group_ids = os.environ.get("PLANNER_GROUP_IDS", GROUP_ID)
+GROUP_IDS: list[str] = [g.strip() for g in _raw_group_ids.split(",") if g.strip()]
 # ASSIGNEE_GUID anterior (ahora resuelto dinámicamente desde AssignedToEmail del CSV):
 # ASSIGNEE_GUID = "eed15e14-17d2-46fb-ac5f-d415b6e9db1f"
 # Email del remitente para sendMail (requiere Mail.Send Application permission en Azure AD)
@@ -90,6 +93,11 @@ _GUID_TO_NAME_CACHE: dict[str, str | None] = {}
 
 
 # ── Transformaciones ──────────────────────────────────────────────────────────
+
+def _parse_group_ids(group_id: str) -> list[str]:
+    """Parsea un string de GUIDs separados por coma a lista. Un solo GUID retorna lista de 1."""
+    return [g.strip() for g in group_id.split(",") if g.strip()]
+
 
 def _default_date() -> str:
     """Fecha de fallback: hoy + 7 días en ISO 8601 UTC."""
@@ -1055,6 +1063,21 @@ async def list_plans(
     return plans
 
 
+async def list_plans_multi(
+    client: httpx.AsyncClient, token: str, group_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Llama list_plans() para cada group_id y combina resultados.
+    Añade campo 'groupId' a cada plan para trazabilidad en funciones downstream.
+    """
+    all_plans: list[dict[str, Any]] = []
+    for gid in group_ids:
+        plans = await list_plans(client, token, gid)
+        for plan in plans:
+            plan["groupId"] = gid
+        all_plans.extend(plans)
+    return all_plans
+
+
 async def list_buckets(
     client: httpx.AsyncClient,
     token: str,
@@ -1393,8 +1416,9 @@ async def run_list(group_id: str, filter_text: str = "") -> None:
         client_secret=settings.azure_client_secret,
     )
     token = auth.get_token()
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
     if filter_text:
         plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
     print(
@@ -1422,8 +1446,9 @@ async def run_delete(
     )
     token = auth.get_token()
 
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
         if filter_text:
             plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
 
@@ -1818,9 +1843,10 @@ async def run_report(
     )
     token = auth.get_token()
 
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Listar planes
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
         if filter_text:
             plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
 
@@ -1850,6 +1876,7 @@ async def run_report(
         for plan in selected:
             plan_id = plan["id"]
             plan_title = plan["title"]
+            plan_group_id = plan.get("groupId", group_ids[0])
 
             try:
                 # Obtener buckets y tasks
@@ -1895,7 +1922,7 @@ async def run_report(
                             )
                             thread_id = task_details.get("conversationThreadId") or ""
                             if thread_id:
-                                comment = await get_last_comment(client, token, group_id, thread_id)
+                                comment = await get_last_comment(client, token, plan_group_id, thread_id)
                                 await asyncio.sleep(0.5)  # rate-limit: threads/posts tiene límite propio
                         except (httpx.HTTPStatusError, httpx.RequestError):
                             # Si falla obtener detalles, continuar sin comentario
@@ -2006,9 +2033,10 @@ async def run_email_report(
     )
     token = auth.get_token()
 
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Listar planes
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
         if filter_text:
             plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
 
@@ -2203,7 +2231,12 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
     parser = argparse.ArgumentParser(description="Importar CSV a Microsoft Planner")
     parser.add_argument("--csv", type=Path, default=CSV_PATH, help="Ruta al CSV")
-    parser.add_argument("--group-id", default=GROUP_ID, help="Object ID del grupo M365")
+    parser.add_argument(
+        "--group-id",
+        default=",".join(GROUP_IDS),
+        help="Object ID(s) del grupo M365. Acepta uno o varios separados por coma. "
+             "Por defecto usa PLANNER_GROUP_IDS del .env o GROUP_ID hardcodeado.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Simula sin llamar a la API")
     parser.add_argument(
         "--mode",

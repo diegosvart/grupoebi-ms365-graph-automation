@@ -16,6 +16,7 @@ from planner_import import (
     _build_outlook_bar_fallback,
     _derive_task_status,
     _parse_due,
+    _parse_group_ids,
     _print_kpi_block,
     _print_report_table,
     build_report_html,
@@ -28,6 +29,7 @@ from planner_import import (
     graph_request,
     list_buckets,
     list_plans,
+    list_plans_multi,
     list_tasks,
     resolve_email_to_guid,
     resolve_guid_to_email,
@@ -2460,3 +2462,95 @@ class TestTaskTitleLink:
         )
         assert "tasks.office.com" not in html
         assert "Mi tarea" in html
+
+
+class TestParseGroupIds:
+    """_parse_group_ids() — parsea GUIDs separados por coma a lista."""
+
+    def test_single_guid(self):
+        """Un solo GUID retorna lista de 1."""
+        result = _parse_group_ids("abc")
+        assert result == ["abc"]
+
+    def test_two_guids(self):
+        """Dos GUIDs separados por coma retornan lista de 2."""
+        result = _parse_group_ids("abc,def")
+        assert result == ["abc", "def"]
+
+    def test_trims_spaces(self):
+        """Espacios alrededor de GUIDs se eliminan."""
+        result = _parse_group_ids(" abc , def ")
+        assert result == ["abc", "def"]
+
+    def test_multiple_guids(self):
+        """Tres o más GUIDs funcionan."""
+        result = _parse_group_ids("g1, g2, g3, g4")
+        assert result == ["g1", "g2", "g3", "g4"]
+
+    def test_empty_string(self):
+        """String vacío retorna lista vacía."""
+        result = _parse_group_ids("")
+        assert result == []
+
+
+class TestListPlansMulti:
+    """list_plans_multi() — combina planes de múltiples grupos."""
+
+    async def test_single_group_returns_plans_with_group_id(self, fake_token):
+        """Un solo group_id retorna planes con 'groupId' añadido."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock:
+            mock.return_value = [{"id": "p1", "title": "Plan A"}]
+            result = await list_plans_multi(MagicMock(), fake_token, ["g1"])
+            assert len(result) == 1
+            assert result[0]["groupId"] == "g1"
+            assert result[0]["id"] == "p1"
+
+    async def test_two_groups_combines_plans(self, fake_token):
+        """Dos group_ids combinan sus planes en orden."""
+        async def side_effect(client, token, gid):
+            return [{"id": f"p-{gid}", "title": f"Plan {gid}"}]
+
+        with patch.object(planner_import, "list_plans", side_effect=side_effect):
+            result = await list_plans_multi(MagicMock(), fake_token, ["g1", "g2"])
+            assert len(result) == 2
+            assert result[0]["groupId"] == "g1"
+            assert result[1]["groupId"] == "g2"
+            assert result[0]["id"] == "p-g1"
+            assert result[1]["id"] == "p-g2"
+
+    async def test_empty_group_ids_returns_empty(self, fake_token):
+        """Sin group_ids retorna lista vacía."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock):
+            result = await list_plans_multi(MagicMock(), fake_token, [])
+            assert result == []
+
+    async def test_preserves_all_fields_and_adds_group_id(self, fake_token):
+        """Preserva todos los campos de los planes y agrega groupId."""
+        plan_data = {
+            "id": "p123",
+            "title": "Test Plan",
+            "createdDateTime": "2026-03-19T10:00:00Z",
+            "@odata.etag": "etag-123",
+        }
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock:
+            mock.return_value = [plan_data]
+            result = await list_plans_multi(MagicMock(), fake_token, ["g1"])
+            assert result[0]["title"] == "Test Plan"
+            assert result[0]["createdDateTime"] == "2026-03-19T10:00:00Z"
+            assert result[0]["@odata.etag"] == "etag-123"
+            assert result[0]["groupId"] == "g1"
+
+
+class TestRunEmailReportMultiGroup:
+    """run_email_report busca planes en múltiples grupos."""
+
+    async def test_two_groups_calls_list_plans_multi(self, mock_auth, monkeypatch):
+        """Con dos group_ids, list_plans_multi se llama una vez con ambos."""
+        with patch.object(planner_import, "list_plans_multi", new_callable=AsyncMock) as mock_lpm:
+            mock_lpm.return_value = []
+            with patch.object(planner_import, "_print_plans_table"):
+                await planner_import.run_email_report("g1,g2", fetch_checklist=False)
+                mock_lpm.assert_called_once()
+                # Verificar que se llamó con dos group_ids
+                call_args = mock_lpm.call_args
+                assert call_args[0][2] == ["g1", "g2"]

@@ -2,23 +2,118 @@
 <head>
   <meta charset="UTF-8" />
   <style>
-    body { font-family: Segoe UI, Arial, sans-serif; font-size: 12px; }
+    body { font-family: Segoe UI, Arial, sans-serif; font-size: 12px; color: #333; }
     table { border-collapse: collapse; width: 100%; margin: 10px 0; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
     th { background-color: #0078d4; color: white; font-weight: bold; }
-    .header-section { background-color: #0078d4; color: white; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
+    .header-banner { background: linear-gradient(135deg, #0078d4, #005a9e); border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; color: white; }
+    .header-banner h1 { font-size: 20px; font-weight: 700; margin: 0; }
+    .header-banner p { font-size: 12px; color: rgba(255,255,255,0.8); margin: 5px 0 0 0; }
+    .kpi-cards { display: table; width: 100%; margin-bottom: 16px; }
+    .kpi-card { display: table-cell; width: 20%; padding: 12px 8px; border-left: 4px solid #0078d4; background-color: #f5f9ff; text-align: center; }
+    .kpi-card.green { border-left-color: #107c10; background-color: #dff0d8; }
+    .kpi-card.orange { border-left-color: #ff8c00; background-color: #fff4ce; }
+    .kpi-card.gray { border-left-color: #8a8886; background-color: #f3f2f1; }
+    .kpi-card.red { border-left-color: #d13438; background-color: #fde7e9; }
+    .kpi-card .number { font-size: 32px; font-weight: bold; color: #333; display: block; }
+    .kpi-card .label { font-size: 11px; color: #666; margin-top: 4px; }
     .kpi-section { margin-top: 20px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }
     .kpi-table { width: 100%; }
-    .footer { margin-top: 20px; font-size: 11px; color: #666; font-style: italic; }
+    .donut-container { display: table; width: 100%; }
+    .donut-cell { display: table-cell; width: 150px; text-align: center; padding: 10px; }
+    .legend-cell { display: table-cell; padding: 10px; vertical-align: middle; }
+    .legend-item { font-size: 11px; margin: 4px 0; }
+    .legend-dot { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+    .footer { margin-top: 20px; padding: 10px; font-size: 11px; color: #999; border-top: 1px solid #ddd; }
   </style>
 </head>
 <body>
-  <div class="header-section">
-    <h2 style="margin: 0;">PMO 2026</h2>
-    <p style="margin: 5px 0;">Reporte de gestión — 16-03-2026</p>
+  <div class="header-banner">
+    <h1 style="margin: 0;">PMO 2026</h1>
+    <p style="margin: 5px 0 0 0;">Reporte de gestión · 19-03-2026 · 21 tareas</p>
   </div>
 
-  <h3>Tareas por Bucket</h3>
+  <!-- Fix 4.1-4.4: Layout 50/50 KPI (izquierda) + Donut chart (derecha) -->
+  <h3>📊 Resumen de Gestión</h3>
+  <table width="100%" style="margin-bottom:16px;" cellspacing="8" cellpadding="0" border="0">
+    <tr valign="top">
+      <!-- COLUMNA IZQUIERDA: Total arriba + grid 2x2 debajo -->
+      <td width="50%" style="padding-right: 12px;" valign="top">
+        <!-- Total — fila superior completa -->
+        <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:6px;">
+          <tr>
+            <td style="border-left:5px solid #0078d4; background:#e8f4fd; padding:10px 14px; border-radius:4px;">
+              <span style="font-size:32px; font-weight:bold; color:#0055a0;">21</span>
+              <span style="font-size:13px; color:#555; margin-left:8px;">Total</span>
+            </td>
+          </tr>
+        </table>
+        <!-- Grid 2×2: 4 estados -->
+        <table width="100%" cellspacing="4" cellpadding="0">
+          <tr>
+            <td width="50%" style="border-left:4px solid #107c10; background:#c8e6c8; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#0d6e0d;">6</div>
+              <div style="font-size:11px; color:#3f5f3f;">Completadas</div>
+            </td>
+            <td width="4"></td>
+            <td width="50%" style="border-left:4px solid #e07800; background:#ffe0b0; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#8c5d00;">2</div>
+              <div style="font-size:11px; color:#8c5d00;">En Progreso</div>
+            </td>
+          </tr>
+          <tr><td colspan="3" style="height:4px;"></td></tr>
+          <tr>
+            <td width="50%" style="border-left:4px solid #605e5c; background:#e8e8e8; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#3f3d3b;">13</div>
+              <div style="font-size:11px; color:#3f3d3b;">Sin Iniciar</div>
+            </td>
+            <td width="4"></td>
+            <td width="50%" style="border-left:4px solid #d13438; background:#f9d0d0; padding:8px 10px; border-radius:4px;">
+              <div style="font-size:24px; font-weight:bold; color:#8c2a2e;">15</div>
+              <div style="font-size:11px; color:#8c2a2e;">Vencidas</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+      <!-- COLUMNA DERECHA: Donut SVG + leyenda -->
+      <td width="50%" style="text-align: center; padding-left: 12px;">
+        <div style="text-align: center; margin-bottom: 12px;">
+          <!--[if !mso]><!-->
+  <svg width="150" height="150" viewBox="0 0 100 100">
+    <circle cx="50" cy="50" r="40" fill="none" stroke="#107c10" stroke-width="18" stroke-dasharray="71.8 179.5" stroke-dashoffset="-0.0" transform="rotate(-90 50 50)"/><circle cx="50" cy="50" r="40" fill="none" stroke="#ff8c00" stroke-width="18" stroke-dasharray="23.9 227.4" stroke-dashoffset="-71.8" transform="rotate(-90 50 50)"/><circle cx="50" cy="50" r="40" fill="none" stroke="#8a8886" stroke-width="18" stroke-dasharray="155.6 95.7" stroke-dashoffset="-95.7" transform="rotate(-90 50 50)"/><circle cx="50" cy="50" r="40" fill="none" stroke="#d13438" stroke-width="18" stroke-dasharray="179.5 71.8" stroke-dashoffset="-251.3" transform="rotate(-90 50 50)"/>
+    <text x="50" y="55" text-anchor="middle" font-size="20" font-weight="bold" fill="#333">28%</text>
+  </svg>
+<!--<![endif]-->
+<!--[if mso]>
+  <table width="150" cellspacing="0" cellpadding="0" border="0" style="width:150px;"><tr><td width="28%" height="24" style="background-color:#107c10; width:28%; height:24px;"></td><td width="9%" height="24" style="background-color:#ff8c00; width:9%; height:24px;"></td><td width="61%" height="24" style="background-color:#8a8886; width:61%; height:24px;"></td><td width="2%" height="24" style="background-color:#d13438; width:2%; height:24px;"></td></tr></table>
+<![endif]-->
+        </div>
+        <!-- Leyenda debajo del donut -->
+        <table style="margin: 8px auto; font-size:11px;">
+          <tr>
+            <td><span style="color:#107c10; font-weight:bold;">■</span> Completadas: 6</td>
+            <td style="padding-left: 12px;"><span style="color:#ff8c00; font-weight:bold;">■</span> En Progreso: 2</td>
+          </tr>
+          <tr style="margin-top: 4px;">
+            <td><span style="color:#8a8886; font-weight:bold;">■</span> Sin Iniciar: 13</td>
+            <td style="padding-left: 12px;"><span style="color:#d13438; font-weight:bold;">■</span> Vencidas: 15</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Próximas a vencer en 7 días -->
+  <table width="100%" cellspacing="0" cellpadding="0" style="margin-top: 12px;">
+    <tr>
+      <td style="border-left:4px solid #ff8c00; background:#fff4e0; padding:8px 10px; border-radius:4px;">
+        <span style="font-size:20px; font-weight:bold; color:#8c5000;">0</span>
+        <span style="font-size:11px; color:#8c5000; margin-left:6px;">Vencen en 7 días</span>
+      </td>
+    </tr>
+  </table>
+
+  <h3>📋 Tareas por Bucket</h3>
   <table>
     <thead>
       <tr>
@@ -28,270 +123,204 @@
         <th>Estado</th>
         <th>%</th>
         <th>Vence</th>
+        <th>Checklist</th>
       </tr>
     </thead>
     <tbody>
-      <tr style="background-color: #f8f9fa;">
-        <td>FASE 7 - Adopción</td>
-        <td>Medir adopción inicial</td>
-        <td>eed15e14-17d</td>
-        <td>inProgress</td>
-        <td style="text-align: center;">50</td>
-        <td>2026-03-18</td>
-      </tr>
-      <tr style="background-color: #f8f9fa;">
-        <td>FASE 7 - Adopción</td>
-        <td>Ejecutar sesiones por rol</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-03-18</td>
-      </tr>
-      <tr style="background-color: #f8f9fa;">
-        <td>FASE 7 - Adopción</td>
-        <td>Preparar capacitación operativa</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-03-18</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 6 - Power BI</td>
-        <td>Publicar y embeber en Teams</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-03-05</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 6 - Power BI</td>
-        <td>Diseñar vista ejecutiva</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-03-05</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 6 - Power BI</td>
-        <td>Conectar SharePoint a Power BI</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-03-05</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 5 - Automatización</td>
-        <td>Crear flujo notificación tareas vencidas</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-03-02</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 5 - Automatización</td>
-        <td>Crear flujo cálculo % avance</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-03-02</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 4 - Gobernanza</td>
-        <td>Crear lista Portafolio en SharePoint</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-02-27</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 4 - Gobernanza</td>
-        <td>Formalizar rutina semanal</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-02-25</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 4 - Gobernanza</td>
-        <td>Definir criterios Verde/Amarillo/Rojo</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-02-26</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 3 - Carga Masiva</td>
-        <td>Crear flujo en Power Automate</td>
-        <td>eed15e14-17d</td>
-        <td>inProgress</td>
-        <td style="text-align: center;">50</td>
-        <td>2026-02-25</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 2 - Diseño Planner</td>
-        <td>Validar permisos en Teams</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-02-25</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 2 - Diseño Planner</td>
-        <td>Definir convención oficial de nombres</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-02-25</td>
-      </tr>
-      <tr style="background-color: #fff3cd;">
-        <td>FASE 2 - Diseño Planner</td>
-        <td>Crear plantilla estándar de proyecto</td>
-        <td>eed15e14-17d</td>
-        <td>notStarted</td>
-        <td style="text-align: center;">0</td>
-        <td>2026-02-25</td>
-      </tr>
-      <tr style="background-color: #d4edda;">
+      <tr style="background-color: #c8e6c8;">
         <td>FASE 1 - Normalización</td>
         <td>Revisar estructura actual del Excel</td>
-        <td>eed15e14-17d</td>
-        <td>completed</td>
-        <td style="text-align: center;">100</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#107c10; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Completada</span></td>
+        <td style="text-align: center;">100%</td>
         <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#dff0d8; color:#107c10; padding:2px 6px; border-radius:3px;">5/5</span></td>
       </tr>
-      <tr style="background-color: #d4edda;">
+      <tr style="background-color: #c8e6c8;">
         <td>FASE 1 - Normalización</td>
         <td>Crear hoja proyectos_normalizados</td>
-        <td>eed15e14-17d</td>
-        <td>completed</td>
-        <td style="text-align: center;">100</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#107c10; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Completada</span></td>
+        <td style="text-align: center;">100%</td>
         <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#dff0d8; color:#107c10; padding:2px 6px; border-radius:3px;">6/6</span></td>
       </tr>
-      <tr style="background-color: #d4edda;">
+      <tr style="background-color: #c8e6c8;">
         <td>FASE 1 - Normalización</td>
         <td>Crear hoja tareas_proyecto</td>
-        <td>eed15e14-17d</td>
-        <td>completed</td>
-        <td style="text-align: center;">100</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#107c10; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Completada</span></td>
+        <td style="text-align: center;">100%</td>
         <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#dff0d8; color:#107c10; padding:2px 6px; border-radius:3px;">5/5</span></td>
       </tr>
-      <tr style="background-color: #d4edda;">
+      <tr style="background-color: #c8e6c8;">
         <td>FASE 1 - Normalización</td>
         <td>Validar integridad de datos</td>
-        <td>eed15e14-17d</td>
-        <td>completed</td>
-        <td style="text-align: center;">100</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#107c10; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Completada</span></td>
+        <td style="text-align: center;">100%</td>
         <td>2026-02-18</td>
+        <td style="text-align: center;"><span style="background-color:#dff0d8; color:#107c10; padding:2px 6px; border-radius:3px;">4/4</span></td>
       </tr>
-      <tr style="background-color: #d4edda;">
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 2 - Diseño Planner</td>
+        <td>Validar permisos en Teams</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 2 - Diseño Planner</td>
+        <td>Definir convención oficial de nombres</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/4</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 2 - Diseño Planner</td>
+        <td>Crear plantilla estándar de proyecto</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/4</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 3 - Carga Masiva</td>
+        <td>Crear flujo en Power Automate</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#e07800; color:#333; padding:4px 8px; border-radius:4px; font-weight:bold;">En Progreso</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/6</span></td>
+      </tr>
+      <tr style="background-color: #c8e6c8;">
         <td>FASE 3 - Carga Masiva</td>
         <td>Ejecutar carga masiva completa</td>
-        <td>eed15e14-17d</td>
-        <td>completed</td>
-        <td style="text-align: center;">100</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#107c10; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Completada</span></td>
+        <td style="text-align: center;">100%</td>
         <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#dff0d8; color:#107c10; padding:2px 6px; border-radius:3px;">3/3</span></td>
       </tr>
-      <tr style="background-color: #d4edda;">
+      <tr style="background-color: #c8e6c8;">
         <td>FASE 3 - Carga Masiva</td>
         <td>Preparar Excel para importación</td>
-        <td>eed15e14-17d</td>
-        <td>completed</td>
-        <td style="text-align: center;">100</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#107c10; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Completada</span></td>
+        <td style="text-align: center;">0%</td>
         <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/4</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 4 - Gobernanza</td>
+        <td>Crear lista Portafolio en SharePoint</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-02-27</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/4</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 4 - Gobernanza</td>
+        <td>Formalizar rutina semanal</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-02-25</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 4 - Gobernanza</td>
+        <td>Definir criterios Verde/Amarillo/Rojo</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-02-26</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/4</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 5 - Automatización</td>
+        <td>Crear flujo notificación tareas vencidas</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-03-02</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 5 - Automatización</td>
+        <td>Crear flujo cálculo % avance</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-03-02</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/4</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 6 - Power BI</td>
+        <td>Publicar y embeber en Teams</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">66%</td>
+        <td>2026-03-05</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">2/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 6 - Power BI</td>
+        <td>Diseñar vista ejecutiva</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-03-05</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 6 - Power BI</td>
+        <td>Conectar SharePoint a Power BI</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-03-05</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 7 - Adopción</td>
+        <td>Medir adopción inicial</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#e07800; color:#333; padding:4px 8px; border-radius:4px; font-weight:bold;">En Progreso</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-03-18</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 7 - Adopción</td>
+        <td>Ejecutar sesiones por rol</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-03-18</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
+      </tr>
+      <tr style="background-color: #f9d0d0;">
+        <td>FASE 7 - Adopción</td>
+        <td>Preparar capacitación operativa</td>
+        <td>Diego Elias Morales Contreras</td>
+        <td><span style="background-color:#605e5c; color:white; padding:4px 8px; border-radius:4px; font-weight:bold;">Sin Iniciar</span></td>
+        <td style="text-align: center;">0%</td>
+        <td>2026-03-18</td>
+        <td style="text-align: center;"><span style="background-color:#e8f4fd; color:#0078d4; padding:2px 6px; border-radius:3px;">0/3</span></td>
       </tr>
     </tbody>
   </table>
 
-  <div class="kpi-section">
-    <h3>KPIs — Resumen del Plan</h3>
-    <table class="kpi-table">
-      <tr>
-        <td style="text-align: center;"><strong>Total</strong></td>
-        <td style="text-align: center;"><strong>Completadas</strong></td>
-        <td style="text-align: center;"><strong>En Progreso</strong></td>
-        <td style="text-align: center;"><strong>Sin Iniciar</strong></td>
-        <td style="text-align: center;"><strong>Vencidas</strong></td>
-      </tr>
-      <tr>
-        <td style="text-align: center;">21</td>
-        <td style="text-align: center;">6</td>
-        <td style="text-align: center;">2</td>
-        <td style="text-align: center;">13</td>
-        <td style="text-align: center;">12</td>
-      </tr>
-    </table>
-
-    <h4>Señal por Bucket</h4>
-    <table class="kpi-table">
-      <tr>
-        <th>Bucket</th>
-        <th>Señal</th>
-        <th>Total</th>
-        <th>Completadas</th>
-        <th>En Progreso</th>
-        <th>Sin Iniciar</th>
-      </tr>
-      <tr>
-        <td>FASE 7 - Adopción</td>
-        <td style="background-color: #fff3cd; text-align: center;">⚠ </td>
-        <td style="text-align: center;">3</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">1</td>
-        <td style="text-align: center;">2</td>
-      </tr>
-      <tr>
-        <td>FASE 6 - Power BI</td>
-        <td style="background-color: #ffd6d6; text-align: center;">⛔</td>
-        <td style="text-align: center;">3</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">3</td>
-      </tr>
-      <tr>
-        <td>FASE 5 - Automatización</td>
-        <td style="background-color: #ffd6d6; text-align: center;">⛔</td>
-        <td style="text-align: center;">2</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">2</td>
-      </tr>
-      <tr>
-        <td>FASE 4 - Gobernanza</td>
-        <td style="background-color: #ffd6d6; text-align: center;">⛔</td>
-        <td style="text-align: center;">3</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">3</td>
-      </tr>
-      <tr>
-        <td>FASE 3 - Carga Masiva</td>
-        <td style="background-color: #ffd6d6; text-align: center;">⛔</td>
-        <td style="text-align: center;">3</td>
-        <td style="text-align: center;">2</td>
-        <td style="text-align: center;">1</td>
-        <td style="text-align: center;">0</td>
-      </tr>
-      <tr>
-        <td>FASE 2 - Diseño Planner</td>
-        <td style="background-color: #ffd6d6; text-align: center;">⛔</td>
-        <td style="text-align: center;">3</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">3</td>
-      </tr>
-      <tr>
-        <td>FASE 1 - Normalización</td>
-        <td style="background-color: #d4edda; text-align: center;">✅</td>
-        <td style="text-align: center;">4</td>
-        <td style="text-align: center;">4</td>
-        <td style="text-align: center;">0</td>
-        <td style="text-align: center;">0</td>
-      </tr>
-    </table>
-  </div>
-
   <div class="footer">
-    <p>Generado automáticamente por planner_import.py — Modo: email-report</p>
+    <p>Generado por automatización de procesos · Creado y desarrollado por Diego Morales - Project Manager 2026 · Gestión de proyectos e iniciativas: 21</p>
   </div>
 </body>
 </html>
