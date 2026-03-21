@@ -1,0 +1,12 @@
+{
+  "last_updated": "2026-03-19T17:40:12.495843",
+  "branch": "feature/git-workflow-enforcement",
+  "focus": "Cross-IDE agent workflow and session continuity",
+  "completed": [],
+  "pending": [],
+  "next_step": "Continuar en rama 'feature/git-workflow-enforcement'",
+  "risks": [
+    "Historical docs may contain exposed secrets and should not be copied into canonical context."
+  ],
+  "files_touched": []
+}

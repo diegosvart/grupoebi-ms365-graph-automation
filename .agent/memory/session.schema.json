@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentSessionMemory",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "last_updated",
+    "branch",
+    "focus",
+    "completed",
+    "pending",
+    "next_step",
+    "risks",
+    "files_touched"
+  ],
+  "properties": {
+    "last_updated": {
+      "type": "string",
+      "description": "ISO-8601 timestamp for the last session update."
+    },
+    "branch": {
+      "type": "string"
+    },
+    "focus": {
+      "type": "string"
+    },
+    "completed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_step": {
+      "type": "string"
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "files_touched": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

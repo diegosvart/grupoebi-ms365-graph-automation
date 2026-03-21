@@ -1,6 +1,11 @@
-# Reglas de seguridad — Python + Microsoft Graph
+# Adaptador Claude: seguridad
 
-## Credenciales (CRÍTICO)
+La fuente de verdad compartida para seguridad vive en `.agent/context/SECURITY.md`.
+Las reglas de Graph compartidas viven en `.agent/context/GRAPH.md`.
+
+## Reglas complementarias para Claude
+
+## Credenciales (CRITICO)
 - `client_secret`, `access_token`, `refresh_token` NUNCA en logs ni prints
 - Variables de entorno cargadas desde el .env del MCP — nunca hardcodear
 - MSAL cachea tokens automáticamente — no reimplementar token storage
