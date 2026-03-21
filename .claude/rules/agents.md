@@ -1,4 +1,9 @@
-# Cuándo delegar a subagentes
+# Adaptador Claude: delegacion de agentes
+
+La regla canonica compartida esta en `.agent/context/WORKFLOW.md` y `.agent/context/GRAPH.md`.
+Usa este archivo solo como complemento Claude-specific.
+
+## Cuando delegar a subagentes
 
 ## SIEMPRE delegar si la tarea implica:
 - Leer más de 5 archivos para completar el análisis

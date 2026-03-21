@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hook SessionStart: muestra contexto de sesión anterior y resumen Planner."""
+"""Hook SessionStart: muestra contexto neutral de la ultima sesion y resumen Planner."""
 import asyncio
 import json
 import os
@@ -60,9 +60,31 @@ async def _planner_summary() -> None:
         pass
 
 
-# Mostrar sesión anterior
-sessions_dir = Path(__file__).parent.parent / ".claude" / "sessions"
-if sessions_dir.exists():
+# Mostrar sesion anterior desde la capa canonica; fallback a la ubicacion legacy
+root = Path(__file__).parent.parent
+memory_dir = root / ".agent" / "memory"
+sessions_dir = memory_dir / "checkpoints"
+current_session = memory_dir / "current-session.json"
+legacy_sessions_dir = root / ".claude" / "sessions"
+
+if current_session.exists():
+    try:
+        data = json.loads(current_session.read_text(encoding="utf-8"))
+        print("\n--- Sesion actual compartida ---")
+        if data.get("branch"):
+            print(f"Branch     : {data['branch']}")
+        if data.get("focus"):
+            print(f"Foco       : {data['focus']}")
+        if data.get("completed"):
+            print(f"Completado : {', '.join(data['completed'])}")
+        if data.get("pending"):
+            print(f"Pendiente  : {', '.join(data['pending'])}")
+        if data.get("next_step"):
+            print(f"Proximo    : {data['next_step']}")
+        print("")
+    except Exception:
+        pass
+elif sessions_dir.exists():
     cutoff = datetime.now() - timedelta(days=7)
     sessions = sorted(
         [f for f in sessions_dir.glob("*.json") if datetime.fromtimestamp(f.stat().st_mtime) > cutoff],
@@ -74,6 +96,27 @@ if sessions_dir.exists():
         try:
             data = json.loads(sessions[0].read_text(encoding="utf-8"))
             print("\n--- Sesion anterior ---")
+            if data.get("completed"):
+                print(f"Completado : {', '.join(data['completed'])}")
+            if data.get("pending"):
+                print(f"Pendiente  : {', '.join(data['pending'])}")
+            if data.get("next_step"):
+                print(f"Proximo    : {data['next_step']}")
+            print("")
+        except Exception:
+            pass
+elif legacy_sessions_dir.exists():
+    cutoff = datetime.now() - timedelta(days=7)
+    sessions = sorted(
+        [f for f in legacy_sessions_dir.glob("*.json") if datetime.fromtimestamp(f.stat().st_mtime) > cutoff],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    if sessions:
+        try:
+            data = json.loads(sessions[0].read_text(encoding="utf-8"))
+            print("\n--- Sesion anterior (legacy) ---")
             if data.get("completed"):
                 print(f"Completado : {', '.join(data['completed'])}")
             if data.get("pending"):

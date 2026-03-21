@@ -13,8 +13,10 @@ import pytest
 import planner_import
 from planner_import import (
     GRAPH_BASE,
+    _build_outlook_bar_fallback,
     _derive_task_status,
     _parse_due,
+    _parse_group_ids,
     _print_kpi_block,
     _print_report_table,
     build_report_html,
@@ -27,6 +29,7 @@ from planner_import import (
     graph_request,
     list_buckets,
     list_plans,
+    list_plans_multi,
     list_tasks,
     resolve_email_to_guid,
     resolve_guid_to_email,
@@ -2322,3 +2325,232 @@ class TestKPIProximas7Dias:
         # Verificar que el stat card contiene 0
         assert "Vencen en 7 días" in html, "Texto 'Vencen en 7 días' no encontrado"
         assert ">0</span>" in html or ">0<" in html, "Número 0 no encontrado para próximas a vencer"
+
+
+class TestOutlookFallback:
+    """Tests para fallback de Outlook — conditional comments y barra HTML."""
+
+    def test_donut_output_contains_mso_conditional(self):
+        """Verifica que el SVG tenga conditional comments para Outlook."""
+        result = planner_import._build_donut_svg(5, 3, 2, 1, 11)
+        assert "<!--[if mso]>" in result, "Conditional comment para MSO no encontrado"
+        assert "<!--[if !mso]><!-->" in result, "Conditional comment para no-MSO no encontrado"
+        assert "<!--<![endif]-->" in result, "Cierre de conditional comment no encontrado"
+
+    def test_donut_output_still_contains_svg(self):
+        """Verifica que el SVG no haya desaparecido en clientes modernos."""
+        result = planner_import._build_donut_svg(5, 3, 2, 1, 11)
+        assert '<svg width="150" height="150"' in result, "SVG desapareció"
+        assert "<circle" in result, "Paths SVG no encontrados"
+
+    def test_outlook_fallback_has_four_colors(self):
+        """Verifica que la barra HTML de Outlook tenga los 4 colores cuando todos > 0."""
+        result = planner_import._build_outlook_bar_fallback(5, 3, 2, 1, 11)
+        assert "#107c10" in result, "Color verde (completadas) no encontrado"
+        assert "#ff8c00" in result, "Color naranja (en progreso) no encontrado"
+        assert "#8a8886" in result, "Color gris (sin iniciar) no encontrado"
+        assert "#d13438" in result, "Color rojo (vencidas) no encontrado"
+
+    def test_outlook_fallback_omits_zero_segment(self):
+        """Verifica que segmentos con count=0 no se emitan en la barra."""
+        result = planner_import._build_outlook_bar_fallback(5, 3, 0, 0, 8)
+        # Contar celdas <td> en la barra (deberían ser 2, no 4)
+        td_count = result.count("<td")
+        assert td_count == 2, f"Se esperaban 2 celdas (5+3), pero se encontraron {td_count}"
+
+    def test_outlook_fallback_total_zero_shows_gray_bar(self):
+        """Verifica que total=0 muestre barra gris con 'Sin datos'."""
+        result = planner_import._build_outlook_bar_fallback(0, 0, 0, 0, 0)
+        assert "Sin datos" in result, "Texto 'Sin datos' no encontrado para total=0"
+        assert "#f3f2f1" in result, "Color gris de fondo no encontrado"
+
+    def test_outlook_fallback_bar_widths_sum_to_100(self):
+        """Verifica que los anchos de las celdas sumen exactamente 100%."""
+        result = planner_import._build_outlook_bar_fallback(25, 25, 25, 25, 100)
+        # Extraer los width atributos de las celdas de la barra
+        import re
+        widths = re.findall(r'width="(\d+)%"', result)
+        # Deberían haber 4 celdas con 25% cada una
+        assert len(widths) == 4, f"Se esperaban 4 celdas, se encontraron {len(widths)}"
+        bar_widths = [int(w) for w in widths]
+        assert sum(bar_widths) == 100, f"Los anchos no suman 100: {bar_widths}"
+
+    def test_outlook_fallback_returns_only_bar_no_legend(self):
+        """Verifica que el fallback NO incluye leyenda (proporcionada por build_report_html)."""
+        result = planner_import._build_outlook_bar_fallback(20, 10, 5, 5, 40)
+        # NO debe contener "Completado:" (que era parte de la leyenda removida)
+        assert "Completado:" not in result, "Fallback no debe incluir leyenda"
+        # Pero SÍ debe tener la barra de colores
+        assert "<table" in result, "Fallback debe contener tabla de barra"
+
+    def test_conditional_comments_correctly_nested(self):
+        """Verifica que los conditional comments estén correctamente anidados."""
+        result = planner_import._build_donut_svg(10, 5, 3, 2, 20)
+        # El SVG debe estar DENTRO de <!--[if !mso]><!--> ... <!--<![endif]-->
+        # El fallback debe estar DENTRO de <!--[if mso]> ... <![endif]-->
+        assert result.index("<!--[if !mso]><!-->") < result.index("<svg"), "SVG no está dentro del conditional !mso"
+        assert result.index("<!--[if mso]>") < result.index("<table"), "Fallback no está dentro del conditional mso"
+        assert result.rindex("<![endif]-->") > result.rindex("</table>"), "Cierre no está después del fallback"
+
+
+class TestAssigneeDisplayLogic:
+    """Verifica que el nombre del asignado se muestra siempre completo."""
+
+    def test_single_assignee_shows_full_name(self):
+        """Valida que un nombre largo se muestra sin truncamiento."""
+        names_map = {"guid1": "Diego Elias Morales Contreras"}
+        assignments = {"guid1": {}}
+        assignee_names = [names_map.get(g, g[:12]) for g in assignments.keys()]
+        result = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
+        assert result == "Diego Elias Morales Contreras"
+
+    def test_multiple_assignees_shows_full_names(self):
+        """Valida que múltiples asignados se muestran con nombres completos."""
+        names_map = {"guid1": "Diego Elias Morales Contreras", "guid2": "Ana Gomez"}
+        assignments = {"guid1": {}, "guid2": {}}
+        assignee_names = [names_map.get(g, g[:12]) for g in assignments.keys()]
+        result = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
+        assert "Diego Elias Morales Contreras" in result
+        assert "Ana Gomez" in result
+
+    def test_empty_assignments_shows_sin_asignar(self):
+        """Valida que sin asignados muestra '(sin asignar)'."""
+        assignee_names = []
+        result = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
+        assert result == "(sin asignar)"
+
+
+class TestTaskTitleLink:
+    """Verifica que el título de cada tarea incluye un deep-link a Planner."""
+
+    def test_task_title_has_link_when_id_present(self):
+        """Con task_id presente, el HTML incluye href a tasks.office.com."""
+        tasks = [
+            {
+                "id": "abc123",
+                "title": "Mi tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "AssigneeDisplay": "(sin asignar)",
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        html = planner_import.build_report_html(
+            "Plan", {"b1": "Bucket"}, tasks, "2026-03-19"
+        )
+        assert 'href="https://tasks.office.com/Home/Task/abc123"' in html
+        assert 'target="_blank"' in html
+
+    def test_task_title_plain_text_when_no_id(self):
+        """Sin task_id, el título se muestra como texto plano (sin <a>)."""
+        tasks = [
+            {
+                "id": "",
+                "title": "Mi tarea",
+                "bucketId": "b1",
+                "percentComplete": 0,
+                "assignments": {},
+                "AssigneeDisplay": "(sin asignar)",
+                "ChecklistDone": 0,
+                "ChecklistTotal": 0,
+            }
+        ]
+        html = planner_import.build_report_html(
+            "Plan", {"b1": "Bucket"}, tasks, "2026-03-19"
+        )
+        assert "tasks.office.com" not in html
+        assert "Mi tarea" in html
+
+
+class TestParseGroupIds:
+    """_parse_group_ids() — parsea GUIDs separados por coma a lista."""
+
+    def test_single_guid(self):
+        """Un solo GUID retorna lista de 1."""
+        result = _parse_group_ids("abc")
+        assert result == ["abc"]
+
+    def test_two_guids(self):
+        """Dos GUIDs separados por coma retornan lista de 2."""
+        result = _parse_group_ids("abc,def")
+        assert result == ["abc", "def"]
+
+    def test_trims_spaces(self):
+        """Espacios alrededor de GUIDs se eliminan."""
+        result = _parse_group_ids(" abc , def ")
+        assert result == ["abc", "def"]
+
+    def test_multiple_guids(self):
+        """Tres o más GUIDs funcionan."""
+        result = _parse_group_ids("g1, g2, g3, g4")
+        assert result == ["g1", "g2", "g3", "g4"]
+
+    def test_empty_string(self):
+        """String vacío retorna lista vacía."""
+        result = _parse_group_ids("")
+        assert result == []
+
+
+class TestListPlansMulti:
+    """list_plans_multi() — combina planes de múltiples grupos."""
+
+    async def test_single_group_returns_plans_with_group_id(self, fake_token):
+        """Un solo group_id retorna planes con 'groupId' añadido."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock:
+            mock.return_value = [{"id": "p1", "title": "Plan A"}]
+            result = await list_plans_multi(MagicMock(), fake_token, ["g1"])
+            assert len(result) == 1
+            assert result[0]["groupId"] == "g1"
+            assert result[0]["id"] == "p1"
+
+    async def test_two_groups_combines_plans(self, fake_token):
+        """Dos group_ids combinan sus planes en orden."""
+        async def side_effect(client, token, gid):
+            return [{"id": f"p-{gid}", "title": f"Plan {gid}"}]
+
+        with patch.object(planner_import, "list_plans", side_effect=side_effect):
+            result = await list_plans_multi(MagicMock(), fake_token, ["g1", "g2"])
+            assert len(result) == 2
+            assert result[0]["groupId"] == "g1"
+            assert result[1]["groupId"] == "g2"
+            assert result[0]["id"] == "p-g1"
+            assert result[1]["id"] == "p-g2"
+
+    async def test_empty_group_ids_returns_empty(self, fake_token):
+        """Sin group_ids retorna lista vacía."""
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock):
+            result = await list_plans_multi(MagicMock(), fake_token, [])
+            assert result == []
+
+    async def test_preserves_all_fields_and_adds_group_id(self, fake_token):
+        """Preserva todos los campos de los planes y agrega groupId."""
+        plan_data = {
+            "id": "p123",
+            "title": "Test Plan",
+            "createdDateTime": "2026-03-19T10:00:00Z",
+            "@odata.etag": "etag-123",
+        }
+        with patch.object(planner_import, "list_plans", new_callable=AsyncMock) as mock:
+            mock.return_value = [plan_data]
+            result = await list_plans_multi(MagicMock(), fake_token, ["g1"])
+            assert result[0]["title"] == "Test Plan"
+            assert result[0]["createdDateTime"] == "2026-03-19T10:00:00Z"
+            assert result[0]["@odata.etag"] == "etag-123"
+            assert result[0]["groupId"] == "g1"
+
+
+class TestRunEmailReportMultiGroup:
+    """run_email_report busca planes en múltiples grupos."""
+
+    async def test_two_groups_calls_list_plans_multi(self, mock_auth, monkeypatch):
+        """Con dos group_ids, list_plans_multi se llama una vez con ambos."""
+        with patch.object(planner_import, "list_plans_multi", new_callable=AsyncMock) as mock_lpm:
+            mock_lpm.return_value = []
+            with patch.object(planner_import, "_print_plans_table"):
+                await planner_import.run_email_report("g1,g2", fetch_checklist=False)
+                mock_lpm.assert_called_once()
+                # Verificar que se llamó con dos group_ids
+                call_args = mock_lpm.call_args
+                assert call_args[0][2] == ["g1", "g2"]

@@ -18,21 +18,98 @@ Importación masiva de tareas desde CSV a Microsoft Planner vía Graph API.
 
 ---
 
-## 2. Referencia rápida de flags
+## 2. Flujos rápidos — Casos más comunes
 
-| Flag | Descripción | Ejemplo |
-|------|-------------|---------|
-| `--mode` | Modo de operación (default: `full`) | `--mode tasks` |
-| `--csv` | Ruta al CSV (default: ruta hardcodeada en el script) | `--csv C:\data\mi.csv` |
-| `--group-id` | Object ID del grupo M365 | `--group-id xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `--dry-run` | Simula sin llamar a la API | `--dry-run` |
-| `--filter` | Filtra planes por título (solo modos `list` y `delete`) | `--filter "PROJ1"` |
+### 2.1 Extraer reporte HTML local (preview en navegador)
+
+**Cuándo:** Revisar estado del proyecto antes de compartir, generar documento para auditoría.
+
+```bash
+python planner_import.py --mode email-report --preview
+```
+
+**Resultado:** Abre automáticamente un archivo HTML en tu navegador. El archivo se guarda en `reports/` con timestamp.
 
 ---
 
-## 3. Modos de operación
+### 2.2 Enviar reporte HTML por correo a todo el equipo
 
-### 3.1 `--mode full` (por defecto)
+**Cuándo:** Reportería semanal/mensual. Se envía a todos los usuarios asignados en el plan.
+
+```bash
+python planner_import.py --mode email-report --filter "Tareas diarias"
+```
+
+**Resultado:** Selecciona interactivamente el plan → Genera HTML → Envía correo a los asignados.
+
+**Prueba antes de enviar masivamente:**
+
+```bash
+python planner_import.py --mode email-report --filter "Tareas diarias" --to dmorales@grupoebi.cl
+```
+
+---
+
+### 2.3 Extraer tabla de tareas a CSV para análisis
+
+**Cuándo:** Análisis en Excel, integración con otras herramientas, auditoría de datos.
+
+```bash
+python planner_import.py --mode report --export reportes/tareas.csv
+```
+
+**Resultado:** Archivo CSV con 14 columnas (ID, Título, Asignado, Estado, %, Vence, Creado, Modificado, Comentarios, etc.).
+
+---
+
+### 2.4 Optimizar reportes grandes (>100 tareas)
+
+**Sin descargar checklist** (más rápido):
+
+```bash
+# Email report sin checklist
+python planner_import.py --mode email-report --no-checklist --preview
+
+# Tabla de tareas sin checklist
+python planner_import.py --mode report --no-checklist --export reportes/rápido.csv
+```
+
+---
+
+### 2.5 Listar planes disponibles (obtener IDs)
+
+**Cuándo:** Necesitas saber qué planes tienes antes de reportar.
+
+```bash
+python planner_import.py --mode list
+```
+
+**Resultado:** Tabla con IDs de planes, útil para usar con `--filter` en otros comandos.
+
+---
+
+## 3. Referencia rápida de flags
+
+| Flag | Descripción | Aplica a |
+|------|-------------|----------|
+| `--mode` | Modo de operación (default: `full`) | todos |
+| `--csv` | Ruta al CSV | `full`, `plan`, `buckets`, `tasks` |
+| `--group-id` | Object ID del grupo M365 | todos excepto `sp-list` |
+| `--dry-run` | Simula sin llamar a la API | `full`, `plan`, `buckets`, `tasks`, `delete` |
+| `--filter` | Filtra por título (coincidencia parcial) | `list`, `delete`, `report`, `email-report`, `sp-list` |
+| `--export` | Exporta tabla a CSV (delimitador `;`) | `report` |
+| `--comments` | Obtiene último comentario por tarea (1 llamada Graph extra) | `report` |
+| `--no-checklist` | Desactiva fetch de checklist (más rápido con >100 tareas) | `report`, `email-report` |
+| `--preview` | Guarda HTML en `reports/` y abre en navegador. No envía correo | `email-report` |
+| `--to EMAIL` | Envía solo a este email en lugar de a todos los asignados | `email-report` |
+| `--site-url` | URL del sitio SharePoint (default: hardcodeado en script) | `sp-list` |
+| `--folder` | Subcarpeta dentro de la librería (vacío = raíz) | `sp-list` |
+
+---
+
+## 4. Modos de operación
+
+### 4.1 `--mode full` (por defecto)
 
 **Qué hace:** Crea el plan completo: cabecera + labels + buckets + tareas.
 
@@ -117,7 +194,7 @@ Sin asignar (vacío): 1
 
 ---
 
-### 3.2 `--mode plan`
+### 4.2 `--mode plan`
 
 **Qué hace:** Crea únicamente la cabecera del plan en Planner y configura sus etiquetas (labels). No crea buckets ni tareas.
 
@@ -179,7 +256,7 @@ GUIDs OK  : 0
 
 ---
 
-### 3.3 `--mode buckets`
+### 4.3 `--mode buckets`
 
 **Qué hace:** Añade buckets a un plan ya existente en Planner. El plan se identifica por su ID.
 
@@ -236,7 +313,7 @@ GUIDs OK  : 0
 
 ---
 
-### 3.4 `--mode tasks`
+### 4.4 `--mode tasks`
 
 **Qué hace:** Añade tareas a un plan y bucket ya existentes. El plan y el bucket se identifican por sus IDs en el CSV.
 
@@ -302,7 +379,7 @@ Sin asignar (vacío): 1
 
 ---
 
-### 3.5 `--mode list`
+### 4.5 `--mode list`
 
 **Qué hace:** Lista todos los planes del grupo M365 en una tabla numerada. Solo lectura — no modifica nada.
 
@@ -340,7 +417,7 @@ Planes encontrados: 3 (filtro: 'PROJ1')
 
 ---
 
-### 3.6 `--mode delete`
+### 4.6 `--mode delete`
 
 **Qué hace:** Muestra la lista de planes → permite seleccionar cuáles eliminar → pide confirmación → los elimina.
 
@@ -365,7 +442,7 @@ python planner_import.py --mode delete --filter "borrador" --dry-run
 
 ---
 
-### 3.7 `--mode report`
+### 4.7 `--mode report`
 
 **Qué hace:** Lista los planes del grupo M365 → permite seleccionar cuáles → imprime tabla de tareas con estado, fechas y última modificación → opcionalmente exporta a CSV con 13 columnas.
 
@@ -401,6 +478,7 @@ python planner_import.py --mode report --comments --export reports/reporte_compl
 | `--filter` | Filtra planes cuyo título lo contenga (insensible a mayúsculas) | `--filter "PRJ"` |
 | `--export` | Exporta el reporte a CSV con delimitador `;` en lugar de solo imprimirlo | `--export C:\data\reporte.csv` |
 | `--comments` | Solicita el último comentario de cada tarea (1 llamada Graph extra por tarea con hilo activo). Por defecto se omite para reducir latencia. | `--comments` |
+| `--no-checklist` | Desactiva obtención de checklist por tarea. Recomendado con >100 tareas para reducir llamadas a Graph. | `--no-checklist` |
 
 #### Salida esperada (tabla interactiva)
 
@@ -515,7 +593,200 @@ Eliminados : 0
 
 ---
 
-## 4. Tabla de valores válidos
+### 4.8 `--mode email-report`
+
+**Qué hace:** Genera un reporte HTML con estado de tareas de un plan seleccionado y lo envía por correo a los usuarios asignados (o a un email específico si se indica `--to`). Opcionalmente, guarda el HTML localmente sin enviar (`--preview`).
+
+**Cuándo usarlo:** Para compartir reportes visuales de avance del proyecto con el equipo o stakeholders. Útil para reportería semanal/mensual con estilo corporativo.
+
+**Llamadas a Graph API:** `1 (GET planes) + 1 (GET buckets) + 1 (GET tareas) + N_tareas × [1 (GET task details) + 1 (GET checklist si `--no-checklist` no está)]`
+
+#### CSV no requerido — lectura únicamente
+
+No necesita archivo CSV para ejecutar. El script consulta directamente los planes existentes en Planner.
+
+#### Comando
+
+```bash
+# Enviar reporte a todos los asignados del plan (producción)
+python planner_import.py --mode email-report \
+  --group-id d0f1fcf9-08e5-4415-a2f8-2111b569e0ec \
+  --filter "Tareas diarias"
+
+# Prueba: enviar solo a un email antes de distribuir masivamente
+python planner_import.py --mode email-report \
+  --group-id d0f1fcf9-08e5-4415-a2f8-2111b569e0ec \
+  --filter "Tareas diarias" \
+  --to dmorales@grupoebi.cl
+
+# Preview local: guarda HTML en reports/ y abre en navegador, sin enviar correo
+python planner_import.py --mode email-report \
+  --group-id d0f1fcf9-08e5-4415-a2f8-2111b569e0ec \
+  --preview
+
+# Más rápido para planes con muchas tareas (desactiva fetch de checklist)
+python planner_import.py --mode email-report \
+  --group-id d0f1fcf9-08e5-4415-a2f8-2111b569e0ec \
+  --no-checklist
+```
+
+#### Flags
+
+| Flag | Descripción | Ejemplo |
+|------|-------------|---------|
+| `--group-id` | Object ID del grupo M365 cuyos planes se listan (default: hardcodeado en script) | `--group-id 198b4a0a-39c7-4521-a546-6a008e3a254a` |
+| `--filter` | Filtra planes cuyo título lo contenga (insensible a mayúsculas) | `--filter "PRJ"` |
+| `--to EMAIL` | Envía el reporte solo a este email en lugar de a todos los asignados del plan | `--to dmorales@grupoebi.cl` |
+| `--preview` | Guarda el HTML en carpeta `reports/` y lo abre en el navegador predeterminado. No envía correo. | `--preview` |
+| `--no-checklist` | Desactiva obtención de checklist por tarea. Recomendado con >100 tareas para reducir latencia. | `--no-checklist` |
+
+#### Salida esperada
+
+**Paso 1 — Seleccionar plan:**
+
+```
+Planes encontrados: 3
+
+  #    ID                                   Título                                   Creado
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  1    aabbccdd-1234-5678-abcd-000000000001 PMO 2026                                 2026-02-18
+  2    bbccddee-1234-5678-abcd-000000000002 PRJ-2026-001-Cash-Flow                   2026-02-26
+  3    ccddeeaa-1234-5678-abcd-000000000003 Tareas diarias PM - DM                   2026-03-01
+
+  Introduce el número del plan a reportar: 3
+```
+
+**Paso 2 — Generar y enviar HTML:**
+
+```
+📊 Generando reporte para 'Tareas diarias PM - DM'...
+
+  Obteniendo tareas...
+  Compilando KPIs y estadísticas...
+  Construyendo HTML...
+
+  ✓ Reporte generado
+
+  Destinatarios identificados: 2
+    - dmorales@grupoebi.cl
+    - gcontreras@grupoebi.cl
+
+  ¿Enviar reporte a estos destinatarios? (s/N): s
+
+  Enviando correo...
+  ✓ Reporte enviado correctamente
+```
+
+**Con `--preview`:**
+
+```
+  ✓ Reporte guardado en: reports/Tareas_diarias_PM_-_DM_2026-03-18.html
+
+  Abriendo en navegador...
+```
+
+#### Contenido del reporte HTML
+
+- **Encabezado:** Logo corporativo, nombre del plan, fecha de generación
+- **KPI Stats:** Tarjetas con:
+  - Total de tareas
+  - Completadas (%)
+  - En progreso
+  - Sin iniciar
+  - Vencidas
+  - Próximas a vencer (7 días)
+- **Tabla de tareas (50/50):** Bucket | Título | Asignado | Estado | % | Vence | Comentarios
+- **Gráficos:** Donut chart de estado (Completadas/En progreso/Sin iniciar), Donut chart por bucket
+- **Footer:** Autoría y fecha de generación
+
+#### Advertencias
+
+- **Rendimiento con grandes planes:** Sin `--no-checklist`, cada tarea genera ~2 llamadas (details + checklist). Con 200 tareas = ~400 llamadas. Se recomienda usar `--no-checklist` en planes con >100 tareas.
+- **Correos sin respuesta:** Si el email del asignado no existe en el tenant, se ignorará al calcular destinatarios.
+- **HTML en `--preview`:** El archivo se abre automáticamente en el navegador predeterminado. Si el script no puede identificar el navegador, solo guarda el archivo.
+
+---
+
+### 4.9 `--mode sp-list`
+
+**Qué hace:** Lista archivos y carpetas de una librería de SharePoint. Solo lectura — no modifica nada.
+
+**Cuándo usarlo:** Para auditar archivos en SharePoint, listar carpetas del proyecto, o verificar la estructura de almacenamiento antes de subir documentos.
+
+**Llamadas a Graph API:** `1 (GET /sites) + 1 (GET /drive/root/children)` (o más si hay paginación)
+
+#### CSV no requerido — lectura únicamente
+
+No necesita archivo CSV para ejecutar. El script consulta directamente SharePoint.
+
+#### Comando
+
+```bash
+# Listar archivos en la raíz de la librería (default)
+python planner_import.py --mode sp-list
+
+# Listar con filtro por nombre (coincidencia parcial)
+python planner_import.py --mode sp-list --filter "2026"
+
+# Listar en una subcarpeta específica
+python planner_import.py --mode sp-list --folder "Proyectos/2026/PRJ-001"
+
+# Con URL de sitio custom
+python planner_import.py --mode sp-list \
+  --site-url "https://grupoebi.sharepoint.com/sites/Proyectos" \
+  --folder "2026"
+```
+
+#### Flags
+
+| Flag | Descripción | Ejemplo |
+|------|-------------|---------|
+| `--filter` | Filtra archivos/carpetas cuyo nombre lo contenga (insensible a mayúsculas) | `--filter "PRJ"` |
+| `--site-url` | URL del sitio SharePoint (default: hardcodeado en script) | `--site-url https://grupoebi.sharepoint.com/sites/Proyectos` |
+| `--folder` | Subcarpeta dentro de la librería para listar. Vacío = raíz | `--folder "2026/Activos"` |
+
+#### Salida esperada
+
+```
+Sitio SharePoint: Proyectos
+Carpeta: 2026
+─────────────────────────────────────────────────────────────────────────────────────────────
+
+  Tipo      Nombre                                        Modificado           Tamaño
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  📁 Carpeta  PRJ-2026-001_Cash-Flow                       2026-03-10 14:23     -
+  📁 Carpeta  PRJ-2026-002_Marketing                       2026-03-15 09:15     -
+  📄 Archivo  Hoja de ruta - Q1.xlsx                       2026-02-20 11:45     245 KB
+  📄 Archivo  Presupuesto 2026.docx                        2026-03-01 16:30     89 KB
+  📄 Archivo  Acta de kickoff.pdf                          2026-02-15 10:00     512 KB
+
+Archivos: 3 | Carpetas: 2 | Total: 5
+```
+
+**Con `--filter "PRJ"`:**
+
+```
+Sitio SharePoint: Proyectos
+Carpeta: 2026 (filtro: 'PRJ')
+─────────────────────────────────────────────────────────────────────────────────────────────
+
+  Tipo      Nombre                                        Modificado           Tamaño
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  📁 Carpeta  PRJ-2026-001_Cash-Flow                       2026-03-10 14:23     -
+  📁 Carpeta  PRJ-2026-002_Marketing                       2026-03-15 09:15     -
+
+Archivos: 0 | Carpetas: 2 | Total: 2
+```
+
+#### Advertencias
+
+- `--dry-run` no tiene efecto en modo `sp-list` (ya es de solo lectura).
+- Si la URL del sitio no existe, aparecerá error 404 durante el GET inicial.
+- Los tamaños de archivo se muestran solo para archivos; las carpetas muestran `-` (no tienen tamaño).
+
+---
+
+## 5. Tabla de valores válidos
 
 | Campo | Valores aceptados | Notas |
 |-------|-------------------|-------|
@@ -538,7 +809,7 @@ Eliminados : 0
 
 ---
 
-## 5. Modo dry-run
+## 6. Modo dry-run
 
 Disponible en todos los modos excepto `list` (que ya es de solo lectura).
 
@@ -578,7 +849,7 @@ GUIDs OK  : 0
 
 ---
 
-## 6. Errores comunes y solución
+## 7. Errores comunes y solución
 
 | Error / Mensaje | Causa | Solución |
 |-----------------|-------|---------|

@@ -52,6 +52,9 @@ from src.config import Settings  # noqa: E402
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 GROUP_ID = "198b4a0a-39c7-4521-a546-6a008e3a254a"
+# Lista de grupos: configurable con PLANNER_GROUP_IDS en .env (coma-separados)
+_raw_group_ids = os.environ.get("PLANNER_GROUP_IDS", GROUP_ID)
+GROUP_IDS: list[str] = [g.strip() for g in _raw_group_ids.split(",") if g.strip()]
 # ASSIGNEE_GUID anterior (ahora resuelto dinámicamente desde AssignedToEmail del CSV):
 # ASSIGNEE_GUID = "eed15e14-17d2-46fb-ac5f-d415b6e9db1f"
 # Email del remitente para sendMail (requiere Mail.Send Application permission en Azure AD)
@@ -90,6 +93,11 @@ _GUID_TO_NAME_CACHE: dict[str, str | None] = {}
 
 
 # ── Transformaciones ──────────────────────────────────────────────────────────
+
+def _parse_group_ids(group_id: str) -> list[str]:
+    """Parsea un string de GUIDs separados por coma a lista. Un solo GUID retorna lista de 1."""
+    return [g.strip() for g in group_id.split(",") if g.strip()]
+
 
 def _default_date() -> str:
     """Fecha de fallback: hoy + 7 días en ISO 8601 UTC."""
@@ -232,36 +240,93 @@ def _checklist_badge(done: int, total: int) -> str:
     return f'<span style="background-color:{bg}; color:{color}; padding:2px 6px; border-radius:3px;">{done}/{total}</span>'
 
 
+def _build_outlook_bar_fallback(
+    completadas: int, en_progreso: int, sin_iniciar: int, vencidas: int, total: int
+) -> str:
+    """Fallback HTML tabla-barra para Outlook (no renderiza SVG inline).
+    Retorna SOLO la barra de progreso. La leyenda es proporcionada por build_report_html.
+    Todo inline styles. Sin border-radius ni CSS classes."""
+    if total == 0:
+        return (
+            '<table width="150" cellspacing="0" cellpadding="0" border="0"'
+            ' style="width:150px;">'
+            '<tr><td width="150" height="24"'
+            ' style="background-color:#f3f2f1; font-size:10px; color:#666;'
+            ' text-align:center; vertical-align:middle; width:150px; height:24px;">'
+            'Sin datos</td></tr></table>'
+        )
+
+    segments = [
+        (completadas, "#107c10", "Completadas"),
+        (en_progreso, "#ff8c00", "En Progreso"),
+        (sin_iniciar, "#8a8886", "Sin Iniciar"),
+        (vencidas, "#d13438", "Vencidas"),
+    ]
+    widths = [int(count / total * 100) for count, _, _ in segments]
+    diff = 100 - sum(widths)
+    if diff != 0:
+        max_idx = widths.index(max(widths))
+        widths[max_idx] += diff
+
+    bar_cells = ""
+    for (count, color, _label), w in zip(segments, widths):
+        if w > 0:
+            bar_cells += (
+                f'<td width="{w}%" height="24"'
+                f' style="background-color:{color}; width:{w}%; height:24px;"></td>'
+            )
+
+    bar_table = (
+        '<table width="150" cellspacing="0" cellpadding="0" border="0" style="width:150px;">'
+        f'<tr>{bar_cells}</tr></table>'
+    )
+    return bar_table
+
+
 def _build_donut_svg(
     completadas: int, en_progreso: int, sin_iniciar: int, vencidas: int, total: int
 ) -> str:
-    """Genera SVG donut chart 150×150 con circunferencia 251.33 px (radio 40px). Fix 4.3: tamaño ampliado."""
-    if total == 0:
-        return '<svg width="150" height="150" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f3f2f1"/></svg>'
+    """Genera SVG donut chart con fallback HTML para Outlook.
 
-    circ = 251.33
-    segments = [
-        (completadas, "#107c10"),  # verde
-        (en_progreso, "#ff8c00"),  # naranja
-        (sin_iniciar, "#8a8886"),  # gris
-        (vencidas, "#d13438"),  # rojo
-    ]
-    paths = []
-    offset = 0.0
-    for count, color in segments:
-        dash = count / total * circ
-        paths.append(
-            f'<circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="18" '
-            f'stroke-dasharray="{dash:.1f} {circ - dash:.1f}" '
-            f'stroke-dashoffset="-{offset:.1f}" transform="rotate(-90 50 50)"/>'
-        )
-        offset += dash
-    pct = f"{int(completadas / total * 100)}%"
-    legend_svg = f'''<svg width="150" height="150" viewBox="0 0 100 100">
+    - Clientes modernos (Gmail, Apple Mail, OWA): ven el SVG.
+    - Outlook Windows (motor Word): ve barra de progreso HTML puro.
+    """
+    if total == 0:
+        svg_block = '<svg width="150" height="150" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f3f2f1"/></svg>'
+    else:
+        circ = 251.33
+        segments = [
+            (completadas, "#107c10"),  # verde
+            (en_progreso, "#ff8c00"),  # naranja
+            (sin_iniciar, "#8a8886"),  # gris
+            (vencidas, "#d13438"),  # rojo
+        ]
+        paths = []
+        offset = 0.0
+        for count, color in segments:
+            dash = count / total * circ
+            paths.append(
+                f'<circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="18" '
+                f'stroke-dasharray="{dash:.1f} {circ - dash:.1f}" '
+                f'stroke-dashoffset="-{offset:.1f}" transform="rotate(-90 50 50)"/>'
+            )
+            offset += dash
+        pct = f"{int(completadas / total * 100)}%"
+        svg_block = f'''<svg width="150" height="150" viewBox="0 0 100 100">
     {"".join(paths)}
     <text x="50" y="55" text-anchor="middle" font-size="20" font-weight="bold" fill="#333">{pct}</text>
   </svg>'''
-    return legend_svg
+
+    fallback = _build_outlook_bar_fallback(completadas, en_progreso, sin_iniciar, vencidas, total)
+
+    return (
+        "<!--[if !mso]><!-->\n"
+        f"  {svg_block}\n"
+        "<!--<![endif]-->\n"
+        "<!--[if mso]>\n"
+        f"  {fallback}\n"
+        "<![endif]-->"
+    )
 
 
 def _print_report_table(
@@ -608,6 +673,8 @@ def build_report_html(
     .legend-item {{ font-size: 11px; margin: 4px 0; }}
     .legend-dot {{ display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }}
     .footer {{ margin-top: 20px; padding: 10px; font-size: 11px; color: #999; border-top: 1px solid #ddd; }}
+    td a {{ color: #0078d4; text-decoration: none; }}
+    td a:hover {{ text-decoration: underline; }}
   </style>
 </head>
 <body>
@@ -719,6 +786,7 @@ def build_report_html(
         bucket_name = buckets_dict.get(bucket_id, "?")
         raw_title = task.get("title", "")
         title = raw_title[:50] + "…" if len(raw_title) > 50 else raw_title
+        task_id = task.get("id", "")
 
         # Extraer asignados — usar AssigneeDisplay si está disponible
         assignee = task.get("AssigneeDisplay", "(sin asignar)")
@@ -743,9 +811,12 @@ def build_report_html(
 
         row_color = _get_task_row_color(task)
 
+        # Construir celda de título con link a Planner si task_id existe
+        title_cell = f'<a href="https://tasks.office.com/Home/Task/{task_id}" target="_blank">{title}</a>' if task_id else title
+
         html_parts.append(f"""      <tr style="background-color: {row_color};">
         <td>{bucket_name}</td>
-        <td>{title}</td>
+        <td>{title_cell}</td>
         <td>{assignee}</td>
         <td>{status_badge}</td>
         <td style="text-align: center;">{pct_display}</td>
@@ -990,6 +1061,21 @@ async def list_plans(
         next_link: str = data.get("@odata.nextLink", "")
         endpoint = next_link.replace(GRAPH_BASE, "") if next_link else ""
     return plans
+
+
+async def list_plans_multi(
+    client: httpx.AsyncClient, token: str, group_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Llama list_plans() para cada group_id y combina resultados.
+    Añade campo 'groupId' a cada plan para trazabilidad en funciones downstream.
+    """
+    all_plans: list[dict[str, Any]] = []
+    for gid in group_ids:
+        plans = await list_plans(client, token, gid)
+        for plan in plans:
+            plan["groupId"] = gid
+        all_plans.extend(plans)
+    return all_plans
 
 
 async def list_buckets(
@@ -1330,8 +1416,9 @@ async def run_list(group_id: str, filter_text: str = "") -> None:
         client_secret=settings.azure_client_secret,
     )
     token = auth.get_token()
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
     if filter_text:
         plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
     print(
@@ -1359,8 +1446,9 @@ async def run_delete(
     )
     token = auth.get_token()
 
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
         if filter_text:
             plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
 
@@ -1755,9 +1843,10 @@ async def run_report(
     )
     token = auth.get_token()
 
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Listar planes
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
         if filter_text:
             plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
 
@@ -1787,6 +1876,7 @@ async def run_report(
         for plan in selected:
             plan_id = plan["id"]
             plan_title = plan["title"]
+            plan_group_id = plan.get("groupId", group_ids[0])
 
             try:
                 # Obtener buckets y tasks
@@ -1832,7 +1922,7 @@ async def run_report(
                             )
                             thread_id = task_details.get("conversationThreadId") or ""
                             if thread_id:
-                                comment = await get_last_comment(client, token, group_id, thread_id)
+                                comment = await get_last_comment(client, token, plan_group_id, thread_id)
                                 await asyncio.sleep(0.5)  # rate-limit: threads/posts tiene límite propio
                         except (httpx.HTTPStatusError, httpx.RequestError):
                             # Si falla obtener detalles, continuar sin comentario
@@ -1943,9 +2033,10 @@ async def run_email_report(
     )
     token = auth.get_token()
 
+    group_ids = _parse_group_ids(group_id)
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Listar planes
-        plans = await list_plans(client, token, group_id)
+        plans = await list_plans_multi(client, token, group_ids)
         if filter_text:
             plans = [p for p in plans if filter_text.lower() in p["title"].lower()]
 
@@ -2060,9 +2151,7 @@ async def run_email_report(
                     assignee_names = [
                         names_map.get(g, g[:12]) for g in assignments.keys()
                     ]
-                    # Truncar apellidos: primer nombre + inicial del apellido para nombres largos
-                    short_names = [n.split()[0] + " " + n.split()[-1] if len(n) > 20 else n for n in assignee_names]
-                    assignee_display = ", ".join(short_names) if short_names else "(sin asignar)"
+                    assignee_display = ", ".join(assignee_names) if assignee_names else "(sin asignar)"
 
                     enriched_tasks.append({
                         **task,
@@ -2142,7 +2231,12 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
     parser = argparse.ArgumentParser(description="Importar CSV a Microsoft Planner")
     parser.add_argument("--csv", type=Path, default=CSV_PATH, help="Ruta al CSV")
-    parser.add_argument("--group-id", default=GROUP_ID, help="Object ID del grupo M365")
+    parser.add_argument(
+        "--group-id",
+        default=",".join(GROUP_IDS),
+        help="Object ID(s) del grupo M365. Acepta uno o varios separados por coma. "
+             "Por defecto usa PLANNER_GROUP_IDS del .env o GROUP_ID hardcodeado.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Simula sin llamar a la API")
     parser.add_argument(
         "--mode",

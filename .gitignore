@@ -27,7 +27,10 @@ htmlcov/
 *.swp
 *.swo
 
-# Claude / Cursor (opcional; quitar si quieres versionar reglas)
+# Agent memory snapshots
+.agent/memory/checkpoints/
+
+# Claude / Cursor local session data
 .claude/sessions/
 
 # MCP con secretos (usar .cursor/mcp.json.example como plantilla)
